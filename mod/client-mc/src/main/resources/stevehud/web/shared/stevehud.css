@@ -98,7 +98,7 @@
   --panel-bottom: rgba(10, 14, 22, 0.96);
   --panel-border: rgba(255, 255, 255, 0.14);
   --panel-edge: rgba(255, 255, 255, 0.16);
-  --panel-shadow: 0 calc(3 * var(--uk)) calc(14 * var(--uk)) rgba(0, 0, 0, 0.5);
+  --panel-shadow: 0 calc(3 * var(--uk)) calc(14 * var(--uk)) var(--shadow-ink, rgba(0, 0, 0, 0.5));
   --panel-blur: calc(6 * var(--uk));
   --panel-pad: calc(14 * var(--uk));
   --panel-radius: calc(3 * var(--uk));
@@ -191,9 +191,42 @@ body {
   font-size: calc(100% * var(--fit, 1));
 }
 
-/* 右对齐容器里的自适应文本要跟着贴右，否则缩完会留在左边。 */
+/* 右对齐容器里的自适应文本要跟着贴右，否则缩完会留在左边。
+   实际上 text-align 会被 .fit 继承，这两条是给"父级没写、但语义上要贴边"
+   的情况兜底的。 */
 .is-end .fit { text-align: right; }
 .is-center .fit { text-align: center; }
+
+/* .fit 的每一个祖先都必须能被压窄。
+   这是整套自适应里最容易踩空的一步：flex / grid 子项默认 min-width:auto，
+   它的宽度就等于内容宽度，于是 .fit 的 clientWidth 永远等于 scrollWidth，
+   "没有溢出"，缩放永远不触发 —— 表现就是英文长队名硬生生顶出面板。
+   这条规则把"能压窄"一次性补给所有承载数据的容器。 */
+.bug-head > *,
+.side-code, .side-name, .side-score,
+.event-name, .event-stage,
+.timer-label, .timer-value,
+.lower-code, .lower-name, .lower-player, .lower-number,
+.ticker-item, .ticker-flag > span,
+.announce-title, .announce-sub,
+.board-title, .board-head-right,
+.cmp-value, .tbl-name, .tbl-value,
+.lg-item, .lg-item > span,
+.tile-label, .tile-value,
+.roster-code, .roster-name, .rp-name, .rp-number,
+.sg-index, .sg-map, .sg-score, .series-tally-side,
+.tl-time, .tl-text,
+.h2h-code, .h2h-name, .h2h-record, .h2h-vs-text, .h2h-vs-sub {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* 队伍色块里的缩写要能压窄，否则一个长缩写会把整个选手条顶宽。 */
+.lower-colour { max-width: calc(168 * var(--uk)); }
+
+/* 图例是一个会横向增长的横排，必须允许它收缩并让出空间。 */
+.lg-item { flex: 0 1 auto; overflow: hidden; }
+.lg-item + .lg-item { margin-left: auto; }
 
 .fit.is-tight {
   text-overflow: ellipsis;
@@ -562,8 +595,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: calc(3 * var(--uk));
-  padding: calc(8 * var(--uk)) calc(14 * var(--uk));
+  gap: calc(4 * var(--uk));
+  padding: calc(10 * var(--uk)) calc(16 * var(--uk));
   background-image: linear-gradient(200deg, var(--panel-top), var(--panel-bottom));
   border: 1px solid var(--panel-border);
   box-shadow: var(--panel-shadow);
@@ -590,8 +623,8 @@ body {
 .timer-value {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
-  font-size: var(--t-title);
-  font-weight: 700;
+  font-size: calc(38 * var(--uk));
+  font-weight: 800;
   letter-spacing: 0.01em;
   line-height: 1.08;
   color: var(--ink);
@@ -946,9 +979,10 @@ body {
 
 .cmp-row {
   display: grid;
-  grid-template-columns: calc(52 * var(--uk)) minmax(0, 1fr) calc(52 * var(--uk));
+  grid-template-columns: calc(56 * var(--uk)) minmax(0, 1fr) calc(56 * var(--uk));
   align-items: center;
-  gap: calc(9 * var(--uk));
+  gap: calc(10 * var(--uk));
+  min-height: calc(20 * var(--uk));
 }
 
 .cmp-value {
@@ -966,8 +1000,10 @@ body {
 .cmp-track {
   position: relative;
   display: flex;
-  height: calc(9 * var(--uk));
-  background: rgba(255, 255, 255, 0.07);
+  height: calc(14 * var(--uk));
+  /* 中性底纹一律由 --ink 推导，而不是写死白色 alpha：
+     奥运那套是浅色面板，白色的 7% 压在米白底上等于不存在。 */
+  background: color-mix(in srgb, var(--ink) 13%, transparent);
   border-radius: calc(2 * var(--uk));
   overflow: hidden;
 }
@@ -977,10 +1013,10 @@ body {
   content: "";
   position: absolute;
   left: 50%;
-  top: calc(-3 * var(--uk));
-  bottom: calc(-3 * var(--uk));
-  width: 1px;
-  background: rgba(255, 255, 255, 0.35);
+  top: calc(-4 * var(--uk));
+  bottom: calc(-4 * var(--uk));
+  width: calc(2 * var(--uk));
+  background: color-mix(in srgb, var(--ink) 48%, transparent);
   transform: translateX(-0.5px);
 }
 
@@ -994,14 +1030,14 @@ body {
 
 .cmp-fill.is-home {
   right: 50%;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--home) 55%, transparent), var(--home));
-  border-radius: calc(2 * var(--uk)) 0 0 calc(2 * var(--uk));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--home) 45%, transparent), var(--home));
+  border-radius: calc(3 * var(--uk)) 0 0 calc(3 * var(--uk));
 }
 
 .cmp-fill.is-away {
   left: 50%;
-  background: linear-gradient(90deg, var(--away), color-mix(in srgb, var(--away) 55%, transparent));
-  border-radius: 0 calc(2 * var(--uk)) calc(2 * var(--uk)) 0;
+  background: linear-gradient(90deg, var(--away), color-mix(in srgb, var(--away) 45%, transparent));
+  border-radius: 0 calc(3 * var(--uk)) calc(3 * var(--uk)) 0;
 }
 
 .cmp-label-row {
@@ -1045,7 +1081,7 @@ body {
 
 .tbl-row {
   padding: calc(4 * var(--uk)) 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 13%, transparent);
 }
 
 .tbl-row:first-child { border-top: 0; }
@@ -1141,22 +1177,22 @@ body {
 }
 
 .chart-grid-line {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: color-mix(in srgb, var(--ink) 15%, transparent);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
 .chart-zero {
-  stroke: rgba(255, 255, 255, 0.28);
+  stroke: color-mix(in srgb, var(--ink) 42%, transparent);
   stroke-width: 1;
   stroke-dasharray: 3 3;
   vector-effect: non-scaling-stroke;
 }
 
-.chart-area-home { fill: color-mix(in srgb, var(--home) 20%, transparent); }
-.chart-area-away { fill: color-mix(in srgb, var(--away) 20%, transparent); }
-.chart-line-home { stroke: var(--home); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
-.chart-line-away { stroke: var(--away); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
+.chart-area-home { fill: color-mix(in srgb, var(--home) 26%, transparent); }
+.chart-area-away { fill: color-mix(in srgb, var(--away) 26%, transparent); }
+.chart-line-home { stroke: var(--home); stroke-width: 2.5; fill: none; vector-effect: non-scaling-stroke; }
+.chart-line-away { stroke: var(--away); stroke-width: 2.5; fill: none; vector-effect: non-scaling-stroke; }
 
 .chart-dot {
   r: 3;
@@ -1188,8 +1224,8 @@ body {
   flex-direction: column;
   gap: calc(3 * var(--uk));
   padding: calc(8 * var(--uk)) calc(10 * var(--uk));
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
   border-radius: calc(2 * var(--uk));
   min-width: 0;
 }
@@ -1199,7 +1235,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   line-height: 1.1;
 }
 
@@ -1221,10 +1257,11 @@ body {
 }
 
 .tile-delta {
-  font-size: var(--t-micro);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: var(--t-label);
+  font-weight: 800;
+  letter-spacing: 0.06em;
   line-height: 1;
+  margin-top: calc(1 * var(--uk));
 }
 
 .tile-delta.is-up { color: var(--ok); }
@@ -1276,10 +1313,10 @@ body {
 
 .rp-number {
   font-family: var(--font-num);
-  font-size: var(--t-micro);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--ink-faint);
+  font-size: var(--t-label);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--el-accent);
   line-height: 1;
 }
 
@@ -1300,12 +1337,13 @@ body {
 
 .series-game {
   display: grid;
-  grid-template-columns: calc(38 * var(--uk)) minmax(0, 1fr) calc(46 * var(--uk));
+  /* 记分列 58：要放得下 "1 – 0" 和 "进行中" 两种最宽的取值。 */
+  grid-template-columns: calc(38 * var(--uk)) minmax(0, 1fr) calc(58 * var(--uk));
   align-items: center;
   gap: calc(9 * var(--uk));
   padding: calc(4 * var(--uk)) calc(7 * var(--uk));
   border-radius: calc(2 * var(--uk));
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .series-game.is-live {
@@ -1378,17 +1416,20 @@ body {
 .tl-track::before {
   content: "";
   position: absolute;
-  left: calc(30 * var(--uk));
+  /* 对齐到圆点中心，而不是与时间列同一条线。 */
+  left: calc(52 * var(--uk));
   top: calc(4 * var(--uk));
   bottom: calc(4 * var(--uk));
   width: 1px;
-  background: rgba(255, 255, 255, 0.14);
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
 }
 
 .tl-item {
   position: relative;
   display: grid;
-  grid-template-columns: calc(30 * var(--uk)) calc(12 * var(--uk)) minmax(0, 1fr);
+  /* 46 而不是 30：等宽数字下 "23:59" 要 33px，加上内边距正好卡在 40。
+     给 46 之后它不需要缩字号，时间戳就还是设计时的字号。 */
+  grid-template-columns: calc(46 * var(--uk)) calc(12 * var(--uk)) minmax(0, 1fr);
   align-items: center;
   gap: 0;
 }
@@ -1400,7 +1441,7 @@ body {
   font-weight: 700;
   color: var(--ink-faint);
   text-align: right;
-  padding-right: calc(7 * var(--uk));
+  padding-right: calc(8 * var(--uk));
   line-height: 1;
 }
 

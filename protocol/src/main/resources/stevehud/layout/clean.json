@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "name": "边线 · Lineside",
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "theme": {
+    "accent": "#5B8DEF",
+    "live": "#FF4D4D",
+    "ink": "#F5F7FA",
+    "inkDim": "#939CAB",
+    "panelTop": "#12161EED",
+    "panelBottom": "#0A0D13F7",
+    "border": "#FFFFFF1F",
+    "home": "#5B8DEF",
+    "away": "#FF6B6B",
+    "font": ""
+  },
+  "safe": {
+    "x": 40,
+    "y": 45
+  },
+  "elements": [
+    {
+      "id": "bug",
+      "type": "matchBug",
+      "label": "比分角标",
+      "visible": true,
+      "scenes": [],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 45,
+      "width": 320,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "clock": "match"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "clock",
+      "type": "timer",
+      "label": "计时器",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 0,
+      "width": 240,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "flash",
+        "durationMs": 360,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "event",
+      "type": "eventInfo",
+      "label": "赛事信息",
+      "visible": true,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 45,
+      "width": 380,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "none",
+        "durationMs": 380,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "compare",
+      "type": "statCompare",
+      "label": "数据对比",
+      "visible": true,
+      "scenes": [
+        "compact"
+      ],
+      "anchor": "bottomLeft",
+      "x": 40,
+      "y": 0,
+      "width": 420,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "compare",
+        "showLabel": "false"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "board",
+      "type": "leaderBoard",
+      "label": "数据榜",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 230,
+      "width": 320,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "kills",
+        "title": "击杀榜",
+        "valueLabel": "K"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "kpi",
+      "type": "kpiTiles",
+      "label": "关键数据",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 135,
+      "width": 344,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "totals",
+        "cols": "2"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "announce",
+      "type": "announcement",
+      "label": "公告",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": -260,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "window": "allow"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "scaleIn",
+        "update": "pop",
+        "durationMs": 460,
+        "easing": "outBack"
+      }
+    }
+  ]
+}

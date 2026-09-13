@@ -50,6 +50,14 @@ final class Panels {
     static final int EVENT_W = ElementMetrics.referenceWidth(Layout.TYPE_EVENT_INFO);
     static final int TIMER_W = ElementMetrics.referenceWidth(Layout.TYPE_TIMER);
     static final int LOWER_THIRD_W = ElementMetrics.referenceWidth(Layout.TYPE_LOWER_THIRD);
+    static final int STAT_COMPARE_W = ElementMetrics.referenceWidth(Layout.TYPE_STAT_COMPARE);
+    static final int LEADER_BOARD_W = ElementMetrics.referenceWidth(Layout.TYPE_LEADER_BOARD);
+    static final int SERIES_CHART_W = ElementMetrics.referenceWidth(Layout.TYPE_SERIES_CHART);
+    static final int KPI_TILES_W = ElementMetrics.referenceWidth(Layout.TYPE_KPI_TILES);
+    static final int ROSTER_CARD_W = ElementMetrics.referenceWidth(Layout.TYPE_ROSTER_CARD);
+    static final int SERIES_SCORE_W = ElementMetrics.referenceWidth(Layout.TYPE_SERIES_SCORE);
+    static final int TIMELINE_W = ElementMetrics.referenceWidth(Layout.TYPE_TIMELINE);
+    static final int HEAD_TO_HEAD_W = ElementMetrics.referenceWidth(Layout.TYPE_HEAD_TO_HEAD);
     /** The ticker's height. A height, not a width: it does not drive the type scale. */
     static final int TICKER_H = 53;
 
@@ -533,6 +541,580 @@ final class Panels {
             }
         }
         return height;
+    }
+
+
+    // =========================================================================
+    // data boards — one chrome, eight shapes
+    // =========================================================================
+    //
+    // Every board reads the same thing out of the match state: a named table of
+    // labelled metrics (BroadcastState.Board). The element's "board" option names
+    // the table, and an element that names nothing, or names a table that has no
+    // rows, is left off air rather than drawn as an empty frame — that is what
+    // lets a package ship with every panel configured and only the fed ones show.
+    //
+    // These are the compact in-game forms. The browser overlay draws the same
+    // boards richer (gradients, animated bars, real curves); here they are built
+    // only from fill/fillGradient/drawText, which are the calls that have not
+    // moved between 1.21.1 and 1.21.11.
+
+    /**
+     * The panel body every data board sits in.
+     *
+     * <p>Kept here rather than in {@link MatchHud} so the primitives a board uses
+     * for its background and the ones it uses for its rows come from one place.
+     */
+    static void panelChrome(Ctx c, int x, int y, int width, int height) {
+        if (!c.draw) {
+            return;
+        }
+        Prim.panel(c.ctx, x, y, width, height, c.palette.accent, c.alpha);
+    }
+
+    /** A string option, or the fallback when it is absent or blank. */
+    private static String option(Ctx c, String key, String fallback) {
+        Layout.Element element = c.element;
+        if (element == null || element.options == null) {
+            return fallback;
+        }
+        String value = element.options.get(key);
+        return value == null || value.isEmpty() ? fallback : value;
+    }
+
+    /** A numeric option, or the fallback when it is absent or unparsable. */
+    private static int optionInt(Ctx c, String key, int fallback) {
+        try {
+            return Integer.parseInt(option(c, key, "").trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    /** The table this element draws, or null when it names none. */
+    private static BroadcastState.Board boardOf(Ctx c) {
+        String key = option(c, "board", "");
+        return key.isEmpty() ? null : c.state.board(key);
+    }
+
+    /**
+     * The panel body and title bar every board shares.
+     *
+     * <p>Returns the y the content starts at, so a painter only has to draw rows.
+     * Drawn in one pass in both modes: the header is a fixed height, so measuring
+     * and painting cannot disagree about it.
+     */
+    private static int boardHeading(Ctx c, String title, String right, int x, int y, int width) {
+        int innerX = x + PAD + 3;              // clear of the accent spine
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = y + PAD;
+
+        if (c.draw) {
+            if (!title.isEmpty()) {
+                TextFx.tracked(c.ctx, c.font, title, innerX, cursor, innerWidth, c.palette.ink,
+                        Prim.OUTLINE, 1);
+            }
+            if (!right.isEmpty()) {
+                TextFx.trackedRight(c.ctx, c.font, right, innerX + innerWidth, cursor,
+                        innerWidth / 2, c.palette.inkDim, Prim.OUTLINE, 1);
+            }
+            c.ctx.fill(innerX, cursor + 11, innerX + innerWidth, cursor + 12,
+                    Prim.scaled(c.palette.border, 0.7f));
+        }
+        return cursor + 15;
+    }
+
+    /** The one-line value a metric shows: its formatted text when it has one. */
+    private static String metricText(BroadcastState.Metric metric) {
+        if (metric == null) {
+            return "";
+        }
+        return metric.display == null || metric.display.isEmpty()
+                ? formatValue(metric.value) : metric.display;
+    }
+
+    private static String formatValue(double value) {
+        if (Math.abs(value) >= 1000) {
+            return String.format("%,.0f", value);
+        }
+        return Math.abs(value - Math.rint(value)) < 0.05
+                ? String.valueOf(Math.round(value)) : String.format("%.1f", value);
+    }
+
+    static int statCompare(Ctx c, int x, int y) {
+        BroadcastState.Board board = boardOf(c);
+        if (board == null || board.rows.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : STAT_COMPARE_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = boardHeading(c, option(c, "title", board.title), board.unit, x, y, width);
+
+        List<BroadcastState.Side> sides = c.state.getSides();
+        BroadcastState.Side home = sides.isEmpty() ? null : sides.get(0);
+        BroadcastState.Side away = sides.size() > 1 ? sides.get(1) : null;
+        int maxRows = optionInt(c, "maxRows", 6);
+        boolean showLabel = !"false".equals(option(c, "showLabel", "true"));
+
+        double max = optionInt(c, "max", 0);
+        if (max <= 0) {
+            for (BroadcastState.Metric metric : board.rows) {
+                max = Math.max(max, metric.value);
+            }
+        }
+        if (max <= 0) {
+            max = 1;
+        }
+
+        // Rows are paired by key: the home row and the away row of one metric
+        // share a key, which is what makes them two ends of one bar.
+        java.util.LinkedHashMap<String, BroadcastState.Metric[]> paired = new java.util.LinkedHashMap<>();
+        for (BroadcastState.Metric metric : board.rows) {
+            String key = metric.key.isEmpty() ? metric.label : metric.key;
+            BroadcastState.Metric[] pair = paired.computeIfAbsent(key, k -> new BroadcastState.Metric[2]);
+            if (home != null && home.id.equals(metric.side)) {
+                pair[0] = metric;
+            } else if (away != null && away.id.equals(metric.side)) {
+                pair[1] = metric;
+            } else if (pair[0] == null) {
+                pair[0] = metric;
+            } else {
+                pair[1] = metric;
+            }
+        }
+
+        int colourHome = home == null ? c.palette.home : Colors.parse(home.color, c.palette.home);
+        int colourAway = away == null ? c.palette.away : Colors.parse(away.color, c.palette.away);
+        int drawn = 0;
+        for (BroadcastState.Metric[] pair : paired.values()) {
+            if (drawn >= maxRows) {
+                break;
+            }
+            drawn++;
+            int valueWidth = 26;
+            int trackX = innerX + valueWidth + 3;
+            int trackWidth = innerWidth - (valueWidth + 3) * 2;
+            if (trackWidth < 8) {
+                trackWidth = 8;
+            }
+            int middle = trackX + trackWidth / 2;
+            int barY = cursor + 3;
+
+            if (c.draw) {
+                float hShare = pair[0] == null ? 0f : (float) Math.min(1.0, pair[0].value / max);
+                float aShare = pair[1] == null ? 0f : (float) Math.min(1.0, pair[1].value / max);
+                c.ctx.fill(trackX, barY, trackX + trackWidth, barY + 6,
+                        Prim.scaled(Prim.TRACK, c.alpha));
+                int hFill = Math.round((trackWidth / 2f) * hShare);
+                if (hFill > 0) {
+                    c.ctx.fill(middle - hFill, barY, middle, barY + 6,
+                            Prim.scaled(colourHome, c.alpha));
+                }
+                int aFill = Math.round((trackWidth / 2f) * aShare);
+                if (aFill > 0) {
+                    c.ctx.fill(middle, barY, middle + aFill, barY + 6,
+                            Prim.scaled(colourAway, c.alpha));
+                }
+                c.ctx.fill(middle, barY - 1, middle + 1, barY + 7,
+                        Prim.scaled(c.palette.inkDim, 0.7f));
+
+                TextFx.trackedRight(c.ctx, c.font, metricText(pair[0]), innerX + valueWidth,
+                        cursor, valueWidth, c.palette.ink, Prim.OUTLINE, 0);
+                TextFx.tracked(c.ctx, c.font, metricText(pair[1]),
+                        innerX + innerWidth - valueWidth, cursor, valueWidth,
+                        c.palette.ink, Prim.OUTLINE, 0);
+            }
+            cursor += 11;
+
+            if (showLabel && pair[0] != null) {
+                String label = pair[0].label.isEmpty() ? pair[0].key : pair[0].label;
+                if (c.draw) {
+                    TextFx.tracked(c.ctx, c.font, c.palette.text(label), trackX, cursor,
+                            trackWidth, c.palette.inkDim, Prim.OUTLINE, 1);
+                }
+                cursor += 9;
+            }
+            cursor += 2;
+        }
+
+        if (drawn == 0) {
+            return 0;
+        }
+        return cursor + PAD - y;
+    }
+
+    static int leaderBoard(Ctx c, int x, int y) {
+        BroadcastState.Board board = boardOf(c);
+        if (board == null || board.rows.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : LEADER_BOARD_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = boardHeading(c, option(c, "title", board.title), board.unit, x, y, width);
+
+        List<BroadcastState.Metric> rows = new java.util.ArrayList<>(board.rows);
+        String sort = option(c, "sort", "desc");
+        if (!"none".equals(sort)) {
+            rows.sort((a, b) -> "asc".equals(sort)
+                    ? Double.compare(a.value, b.value) : Double.compare(b.value, a.value));
+        }
+        int limit = optionInt(c, "maxRows", 5);
+        boolean showRank = !"false".equals(option(c, "showRank", "true"));
+        int highlight = optionInt(c, "highlight", 3);
+
+        int drawn = 0;
+        for (BroadcastState.Metric metric : rows) {
+            if (drawn >= limit) {
+                break;
+            }
+            int rankWidth = showRank ? 10 : 0;
+            int valueWidth = 26;
+            int nameX = innerX + rankWidth;
+            int nameWidth = innerWidth - rankWidth - valueWidth - 4;
+            int colour = highlight > 0 && drawn < highlight ? c.palette.accent : c.palette.ink;
+
+            if (c.draw) {
+                if (showRank) {
+                    TextFx.tracked(c.ctx, c.font, Integer.toString(drawn + 1), innerX, cursor,
+                            rankWidth, colour, Prim.OUTLINE, 0);
+                }
+                String label = metric.label.isEmpty() ? metric.key : metric.label;
+                TextFx.tracked(c.ctx, c.font, c.palette.text(label), nameX, cursor,
+                        Math.max(4, nameWidth), colour, Prim.OUTLINE, 0);
+                TextFx.trackedRight(c.ctx, c.font, metricText(metric),
+                        innerX + innerWidth, cursor, valueWidth, c.palette.ink, Prim.OUTLINE, 0);
+            }
+            cursor += c.font.fontHeight + 1;
+            if (metric.sub != null && !metric.sub.isEmpty()) {
+                if (c.draw) {
+                    TextFx.tracked(c.ctx, c.font, c.palette.text(metric.sub), nameX, cursor,
+                            Math.max(4, nameWidth), c.palette.inkDim, Prim.OUTLINE, 0);
+                }
+                cursor += c.font.fontHeight;
+            }
+            drawn++;
+        }
+        return cursor + PAD - y;
+    }
+
+    static int kpiTiles(Ctx c, int x, int y) {
+        BroadcastState.Board board = boardOf(c);
+        if (board == null || board.rows.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : KPI_TILES_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = boardHeading(c, option(c, "title", board.title), board.unit, x, y, width);
+
+        int cols = Math.max(1, Math.min(6, optionInt(c, "cols", 3)));
+        int limit = optionInt(c, "maxRows", 6);
+        int gap = 3;
+        int cellWidth = Math.max(12, (innerWidth - gap * (cols - 1)) / cols);
+        int cellHeight = c.font.fontHeight * 2 + 6;
+
+        for (int i = 0; i < board.rows.size() && i < limit; i++) {
+            BroadcastState.Metric metric = board.rows.get(i);
+            int col = i % cols;
+            int row = i / cols;
+            int cellX = innerX + col * (cellWidth + gap);
+            int cellY = cursor + row * (cellHeight + gap);
+
+            if (c.draw) {
+                c.ctx.fill(cellX, cellY, cellX + cellWidth, cellY + cellHeight,
+                        Prim.scaled(Prim.TRACK, c.alpha * 0.6f));
+                String label = metric.label.isEmpty() ? metric.key : metric.label;
+                TextFx.tracked(c.ctx, c.font,
+                        TextFx.fit(c.font, c.palette.text(label), cellWidth - 4, 1),
+                        cellX + 2, cellY + 2, cellWidth - 4, c.palette.inkDim, Prim.OUTLINE, 1);
+                TextFx.tracked(c.ctx, c.font,
+                        TextFx.fit(c.font, metricText(metric), cellWidth - 4, 0),
+                        cellX + 2, cellY + 2 + c.font.fontHeight + 1,
+                        cellWidth - 4, c.palette.ink, Prim.OUTLINE, 0);
+            }
+        }
+        int rows = (Math.min(board.rows.size(), limit) + cols - 1) / cols;
+        return cursor + rows * (cellHeight + gap) - gap + PAD - y;
+    }
+
+    static int rosterCard(Ctx c, int x, int y) {
+        List<BroadcastState.Side> sides = c.state.getSides();
+        String wanted = option(c, "side", "");
+        BroadcastState.Side side = c.state.side(wanted);
+        if (side == null && !sides.isEmpty()) {
+            side = sides.get(0);
+        }
+        if (side == null || side.competitors.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : ROSTER_CARD_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int colour = Colors.parse(side.color, c.palette.home);
+        String code = option(c, "title", side.shortName.isEmpty() ? side.name : side.shortName);
+        String name = option(c, "subtitle", side.name);
+        int cursor = boardHeading(c, code, "", x, y, width);
+
+        if (c.draw && !name.isEmpty()) {
+            TextFx.tracked(c.ctx, c.font, c.palette.text(name), innerX, cursor, innerWidth,
+                    c.palette.ink, Prim.OUTLINE, 0);
+            cursor += c.font.fontHeight + 2;
+        }
+
+        int limit = optionInt(c, "maxRows", 5);
+        for (int i = 0; i < side.competitors.size() && i < limit; i++) {
+            BroadcastState.Competitor competitor = side.competitors.get(i);
+            if (c.draw) {
+                c.ctx.fill(innerX, cursor + 1, innerX + 2, cursor + c.font.fontHeight - 1,
+                        Prim.scaled(colour, c.alpha));
+                String line = competitor.number == null || competitor.number.isEmpty()
+                        ? competitor.name : competitor.number + "  " + competitor.name;
+                TextFx.tracked(c.ctx, c.font, c.palette.text(line), innerX + 5, cursor,
+                        innerWidth - 5, c.palette.ink, Prim.OUTLINE, 0);
+            }
+            cursor += c.font.fontHeight + 2;
+        }
+        return cursor + PAD - y;
+    }
+
+    static int seriesScore(Ctx c, int x, int y) {
+        BroadcastState.Board board = boardOf(c);
+        if (board == null || board.rows.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : SERIES_SCORE_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = boardHeading(c, option(c, "title", board.title), board.unit, x, y, width);
+
+        int limit = optionInt(c, "maxRows", 5);
+        int indexWidth = 16;
+        int scoreWidth = 30;
+        for (int i = 0; i < board.rows.size() && i < limit; i++) {
+            BroadcastState.Metric metric = board.rows.get(i);
+            boolean live = "live".equalsIgnoreCase(metric.state);
+            if (c.draw) {
+                if (live) {
+                    c.ctx.fill(innerX - 3, cursor - 1, innerX + innerWidth + 3,
+                            cursor + c.font.fontHeight + 2,
+                            Prim.scaled(c.palette.accent, c.alpha * 0.16f));
+                }
+                String index = metric.index.isEmpty() ? "G" + (i + 1) : metric.index;
+                TextFx.tracked(c.ctx, c.font, index, innerX, cursor, indexWidth,
+                        live ? c.palette.accent : c.palette.inkDim, Prim.OUTLINE, 0);
+                TextFx.tracked(c.ctx, c.font, c.palette.text(metric.label),
+                        innerX + indexWidth, cursor,
+                        innerWidth - indexWidth - scoreWidth - 3, c.palette.ink, Prim.OUTLINE, 0);
+                TextFx.trackedRight(c.ctx, c.font, metricText(metric), innerX + innerWidth,
+                        cursor, scoreWidth, c.palette.ink, Prim.OUTLINE, 0);
+            }
+            cursor += c.font.fontHeight + 3;
+        }
+
+        // The running tally: this is the number a viewer is actually counting.
+        List<BroadcastState.Side> sides = c.state.getSides();
+        if (sides.size() >= 2) {
+            if (c.draw) {
+                c.ctx.fill(innerX, cursor + 1, innerX + innerWidth, cursor + 2,
+                        Prim.scaled(c.palette.border, 0.7f));
+                TextFx.tracked(c.ctx, c.font,
+                        c.palette.text(sides.get(0).shortName.isEmpty()
+                                ? sides.get(0).name : sides.get(0).shortName),
+                        innerX, cursor + 3, innerWidth / 2 - 8, c.palette.inkDim, Prim.OUTLINE, 1);
+                TextFx.tracked(c.ctx, c.font, sides.get(0).score + " : " + sides.get(1).score,
+                        innerX + innerWidth / 2 - 12, cursor + 3, 26, c.palette.ink,
+                        Prim.OUTLINE, 0);
+                TextFx.trackedRight(c.ctx, c.font,
+                        c.palette.text(sides.get(1).shortName.isEmpty()
+                                ? sides.get(1).name : sides.get(1).shortName),
+                        innerX + innerWidth, cursor + 3, innerWidth / 2 - 8,
+                        c.palette.inkDim, Prim.OUTLINE, 1);
+            }
+            cursor += c.font.fontHeight + 3;
+        }
+        return cursor + PAD - y;
+    }
+
+    static int timeline(Ctx c, int x, int y) {
+        BroadcastState.Board board = boardOf(c);
+        if (board == null || board.rows.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : TIMELINE_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = boardHeading(c, option(c, "title", board.title), board.unit, x, y, width);
+
+        List<BroadcastState.Metric> rows = new java.util.ArrayList<>(board.rows);
+        if (!"asc".equals(option(c, "order", "desc"))) {
+            java.util.Collections.reverse(rows);
+        }
+        int limit = optionInt(c, "maxRows", 5);
+        int timeWidth = 30;
+        int lineX = innerX + timeWidth + 2;
+
+        for (int i = 0; i < rows.size() && i < limit; i++) {
+            BroadcastState.Metric metric = rows.get(i);
+            BroadcastState.Side side = metric.side.isEmpty() ? null : c.state.side(metric.side);
+            int colour = side == null ? c.palette.accent : Colors.parse(side.color, c.palette.accent);
+            if (c.draw) {
+                // The rail is drawn per row so it spans exactly the rows that exist;
+                // a full-height line would stick out of a two-item timeline.
+                c.ctx.fill(lineX, cursor - 1, lineX + 1, cursor + c.font.fontHeight + 2,
+                        Prim.scaled(c.palette.border, 0.6f));
+                c.ctx.fill(lineX - 1, cursor + 2, lineX + 2, cursor + 5,
+                        Prim.scaled(colour, c.alpha));
+                TextFx.trackedRight(c.ctx, c.font, metric.time, innerX + timeWidth,
+                        cursor, timeWidth, c.palette.inkDim, Prim.OUTLINE, 0);
+                String label = metric.label.isEmpty() ? metricText(metric) : metric.label;
+                TextFx.tracked(c.ctx, c.font, c.palette.text(label), lineX + 5, cursor,
+                        Math.max(4, innerWidth - timeWidth - 7), c.palette.ink, Prim.OUTLINE, 0);
+            }
+            cursor += c.font.fontHeight + 3;
+        }
+        return cursor + PAD - y;
+    }
+
+    static int headToHead(Ctx c, int x, int y) {
+        List<BroadcastState.Side> sides = c.state.getSides();
+        if (sides.size() < 2) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : HEAD_TO_HEAD_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = y + PAD;
+        int column = (innerWidth - 30) / 2;
+        int rightColumn = innerX + innerWidth - column;
+
+        for (int i = 0; i < 2; i++) {
+            BroadcastState.Side side = sides.get(i);
+            int colour = Colors.parse(side.color, i == 0 ? c.palette.home : c.palette.away);
+            String code = side.shortName.isEmpty() ? side.name : side.shortName;
+            int at = i == 0 ? innerX : rightColumn;
+            if (c.draw) {
+                c.ctx.fill(at, cursor, at + column, cursor + c.font.fontHeight + 10,
+                        Prim.scaled(colour, c.alpha * 0.14f));
+                TextFx.tracked(c.ctx, c.font, c.palette.text(code), at + 3, cursor + 1,
+                        column - 6, colour, Prim.OUTLINE, 1);
+                TextFx.tracked(c.ctx, c.font,
+                        TextFx.fit(c.font, c.palette.text(side.name), column - 6, 0),
+                        at + 3, cursor + c.font.fontHeight + 4, column - 6,
+                        c.palette.ink, Prim.OUTLINE, 0);
+            }
+        }
+        if (c.draw) {
+            int middle = innerX + innerWidth / 2;
+            TextFx.outlinedCentre(c.ctx, c.font, option(c, "vs", "VS"),
+                    middle, cursor + c.font.fontHeight + 1, c.palette.accent, Prim.OUTLINE);
+        }
+        cursor += c.font.fontHeight * 2 + 12;
+
+        String subtitle = option(c, "subtitle", c.state.getEvent().stage);
+        if (!subtitle.isEmpty()) {
+            if (c.draw) {
+                TextFx.tracked(c.ctx, c.font, c.palette.text(subtitle),
+                        innerX + innerWidth / 2 - innerWidth / 4, cursor, innerWidth / 2,
+                        c.palette.inkDim, Prim.OUTLINE, 1);
+            }
+            cursor += c.font.fontHeight + 2;
+        }
+        return cursor + PAD - y;
+    }
+
+    static int seriesChart(Ctx c, int x, int y) {
+        List<BroadcastState.Side> sides = c.state.getSides();
+        if (sides.isEmpty()) {
+            return 0;
+        }
+        int width = c.boxW > 0 ? c.boxW : SERIES_CHART_W;
+        int innerX = x + PAD + 3;
+        int innerWidth = width - (PAD + 3) - PAD;
+        int cursor = boardHeading(c, option(c, "title", ""), "", x, y, width);
+
+        int plotHeight = optionInt(c, "height", 30);
+        if (plotHeight < 12) {
+            plotHeight = 12;
+        }
+
+        double min = Double.MAX_VALUE;
+        double max = -Double.MAX_VALUE;
+        for (int i = 0; i < 2 && i < sides.size(); i++) {
+            for (Double sample : sides.get(i).series) {
+                if (sample == null || !Double.isFinite(sample)) {
+                    continue;
+                }
+                min = Math.min(min, sample);
+                max = Math.max(max, sample);
+            }
+        }
+        if (min > max) {
+            return 0;   // no series on either side: nothing to plot
+        }
+        if (max - min < 1e-6) {
+            max = min + 1;
+        }
+
+        if (c.draw) {
+            c.ctx.fill(innerX, cursor, innerX + innerWidth, cursor + plotHeight,
+                    Prim.scaled(Prim.TRACK, c.alpha * 0.5f));
+        }
+        for (int i = 0; i < 2 && i < sides.size(); i++) {
+            List<Double> series = sides.get(i).series;
+            if (series.size() < 2) {
+                continue;
+            }
+            int colour = Colors.parse(sides.get(i).color,
+                    i == 0 ? c.palette.home : c.palette.away);
+            int steps = Math.min(series.size(), innerWidth);
+            int previousX = -1;
+            int previousY = -1;
+            for (int step = 0; step < steps; step++) {
+                int at = (int) Math.round(step * (series.size() - 1) / (double) (steps - 1));
+                Double sample = series.get(at);
+                if (sample == null || !Double.isFinite(sample)) {
+                    continue;
+                }
+                int px = innerX + step;
+                int py = cursor + plotHeight - 1
+                        - (int) Math.round((sample - min) / (max - min) * (plotHeight - 2));
+                if (c.draw) {
+                    if (previousX >= 0) {
+                        // A one-pixel segment per column: a real line rasteriser would
+                        // be nicer and would also be the only place in this file that
+                        // needs one.
+                        int from = Math.min(previousY, py);
+                        int to = Math.max(previousY, py);
+                        c.ctx.fill(px, from, px + 1, to + 1, Prim.scaled(colour, c.alpha));
+                    } else {
+                        c.ctx.fill(px, py, px + 1, py + 1, Prim.scaled(colour, c.alpha));
+                    }
+                }
+                previousX = px;
+                previousY = py;
+            }
+        }
+        cursor += plotHeight + 3;
+
+        if (c.draw) {
+            for (int i = 0; i < 2 && i < sides.size(); i++) {
+                BroadcastState.Side side = sides.get(i);
+                int colour = Colors.parse(side.color, i == 0 ? c.palette.home : c.palette.away);
+                int at = i == 0 ? innerX : innerX + innerWidth / 2;
+                c.ctx.fill(at, cursor + 2, at + 6, cursor + 4, Prim.scaled(colour, c.alpha));
+                String label = side.shortName.isEmpty() ? side.name : side.shortName;
+                List<Double> series = side.series;
+                if (!series.isEmpty()) {
+                    label += " " + formatValue(series.get(series.size() - 1));
+                }
+                TextFx.tracked(c.ctx, c.font, c.palette.text(label), at + 9, cursor,
+                        innerWidth / 2 - 12, c.palette.inkDim, Prim.OUTLINE, 1);
+            }
+        }
+        cursor += c.font.fontHeight + 3;
+        return cursor + PAD - y;
     }
 
     // =========================================================================

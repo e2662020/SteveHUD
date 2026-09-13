@@ -9,8 +9,10 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,15 +40,15 @@ import java.util.Set;
  */
 public final class Layouts {
 
-    /** The package a fresh install starts with. */
-    public static final String PRESET_ESPORTS = "esports";
-    /** Cleaner and brighter: white panels, fewer accents, Olympic-broadcast in feel. */
-    public static final String PRESET_OLYMPIC = "olympic";
-    /** Bug and clock only, for a feed that is mostly gameplay. */
-    public static final String PRESET_MINIMAL = "minimal";
+    /** The package a fresh install starts with: dark, dense, cyan. */
+    public static final String PRESET_ARENA = "arena";
+    /** Light panels, gold and deep blue, information-heavy. Olympic in feel. */
+    public static final String PRESET_OLYMPIA = "olympia";
+    /** The least furniture that is still a package. Leaves the frame to the match. */
+    public static final String PRESET_CLEAN = "clean";
 
     private static final List<String> PRESETS = List.of(
-            PRESET_ESPORTS, PRESET_OLYMPIC, PRESET_MINIMAL);
+            PRESET_ARENA, PRESET_OLYMPIA, PRESET_CLEAN);
 
     private static final String RESOURCE_DIR = "/stevehud/layout/";
 
@@ -69,9 +71,9 @@ public final class Layouts {
     /** A display name for a preset, for command feedback and the editor's list. */
     public static String presetLabel(String preset) {
         return switch (preset == null ? "" : preset) {
-            case PRESET_ESPORTS -> "电竞";
-            case PRESET_OLYMPIC -> "奥运";
-            case PRESET_MINIMAL -> "极简";
+            case PRESET_ARENA -> "竞技场";
+            case PRESET_OLYMPIA -> "奥林匹亚";
+            case PRESET_CLEAN -> "边线";
             default -> preset == null ? "" : preset;
         };
     }
@@ -89,7 +91,7 @@ public final class Layouts {
      *         allowed to be wrong, but it is not allowed to have nothing to draw.
      */
     public static Layout load(String preset) {
-        String name = isPreset(preset) ? preset : PRESET_ESPORTS;
+        String name = isPreset(preset) ? preset : PRESET_ARENA;
         try (InputStream in = Layouts.class.getResourceAsStream(RESOURCE_DIR + name + ".json")) {
             if (in == null) {
                 return fallback();
@@ -241,7 +243,34 @@ public final class Layouts {
 
         element.text = element.text == null ? "" : element.text;
         element.binding = element.binding == null ? "" : element.binding.trim();
+
+        // Options are an open schema owned by the renderer, so this only enforces
+        // the two things a document edited by hand gets wrong: a null key, and a
+        // value that is not a string. Bounded so one runaway document cannot make
+        // every broadcast message megabytes wide.
+        if (element.options == null) {
+            element.options = new LinkedHashMap<>();
+        }
+        Map<String, String> options = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : element.options.entrySet()) {
+            if (entry.getKey() == null || options.size() >= MAX_OPTIONS) {
+                continue;
+            }
+            String key = entry.getKey().trim();
+            if (key.isEmpty() || key.length() > MAX_OPTION_KEY) {
+                continue;
+            }
+            String value = entry.getValue() == null ? "" : entry.getValue().trim();
+            options.put(key, value.length() > MAX_OPTION_VALUE
+                    ? value.substring(0, MAX_OPTION_VALUE) : value);
+        }
+        element.options = options;
     }
+
+    /** Enough for every board to be configured several times over. */
+    private static final int MAX_OPTIONS = 48;
+    private static final int MAX_OPTION_KEY = 48;
+    private static final int MAX_OPTION_VALUE = 512;
 
     /**
      * A non-empty id no other element is using. Ids have to be unique because the
@@ -321,7 +350,7 @@ public final class Layouts {
      *
      * <p>Deliberately short. Its job is to leave the package drawing something
      * honest — a bug and a clock — while making clear from its name that the real
-     * presets are missing, rather than to reimplement the esports package in code
+     * presets are missing, rather than to reimplement the flagship package in code
      * and have two definitions to keep in step.
      */
     public static Layout fallback() {

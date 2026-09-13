@@ -35,7 +35,7 @@ final class SteveHudCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUBCOMMANDS = List.of(
             "status", "resend", "scene", "score", "clock", "announce",
-            "ticker", "lower3", "event", "stage", "demo", "reset", "config", "layout");
+            "ticker", "lower3", "stat", "event", "stage", "demo", "reset", "config", "layout");
 
     private final SteveHudPlugin plugin;
     private final Messages messages;
@@ -68,6 +68,7 @@ final class SteveHudCommand implements CommandExecutor, TabCompleter {
             case "announce" -> announce(sender, player, rest);
             case "ticker" -> ticker(sender, player, rest);
             case "lower3" -> lowerThird(sender, player, rest);
+            case "stat" -> stat(sender, player, rest);
             case "event" -> event(sender, player, rest);
             case "stage" -> stage(sender, player, rest);
             case "demo" -> demo(sender, player, rest);
@@ -139,6 +140,152 @@ final class SteveHudCommand implements CommandExecutor, TabCompleter {
         plugin.state().bumpScore(side.id, delta);
         plugin.broadcastState();
         reply(sender, player, "command.score.set", plugin.state().describeScores());
+    }
+
+    /**
+     * Feeds one number into a data board.
+     *
+     * <pre>
+     *   /stevehud stat &lt;board&gt; &lt;value&gt; &lt;label...&gt; [@side]
+     *   /stevehud stat &lt;board&gt; clear
+     *   /stevehud stat clear
+     * </pre>
+     *
+     * <p>The label sits last because it is the one argument that contains spaces,
+     * and joining the tail is friendlier than making an operator quote it. The
+     * optional {@code @side} suffix is what turns two rows into a two-sided bar:
+     * rows that share a label are drawn as a pair, one growing each way from the
+     * axis.
+     *
+     * <p>This is the only write path the boards need, which is the point of every
+     * board reading the same table shape — a tenth panel would not add a command.
+     */
+    private void stat(CommandSender sender, Player player, String[] args) {
+        BroadcastState state = plugin.state();
+        if (args.length == 0) {
+            reply(sender, player, "command.stat.usage");
+            return;
+        }
+        String board = args[0].toLowerCase(Locale.ROOT);
+        if ("clear".equals(board)) {
+            state.setBoards(null);
+            plugin.broadcastState();
+            reply(sender, player, "command.stat.cleared_all");
+            return;
+        }
+        if (args.length == 1) {
+            reportBoard(sender, player, state, board);
+            return;
+        }
+        if ("clear".equalsIgnoreCase(args[1])) {
+            state.getBoards().removeIf(each -> each != null && board.equals(each.key));
+            plugin.broadcastState();
+            reply(sender, player, "command.stat.cleared", board);
+            return;
+        }
+        if (args.length < 3) {
+            reply(sender, player, "command.stat.usage");
+            return;
+        }
+
+        double value;
+        try {
+            value = Double.parseDouble(args[1]);
+        } catch (NumberFormatException e) {
+            reply(sender, player, "command.stat.invalid_value", args[1]);
+            return;
+        }
+
+        List<String> tail = new ArrayList<>(Arrays.asList(args).subList(2, args.length));
+        String sideId = "";
+        String last = tail.get(tail.size() - 1);
+        if (last.startsWith("@")) {
+            String wanted = last.substring(1).toLowerCase(Locale.ROOT);
+            BroadcastState.Side side = state.side(wanted);
+            if (side == null) {
+                reply(sender, player, "command.no_such_side", sideIds());
+                return;
+            }
+            sideId = side.id;
+            tail.remove(tail.size() - 1);
+        }
+        String label = String.join(" ", tail).trim();
+        if (label.isEmpty()) {
+            reply(sender, player, "command.stat.usage");
+            return;
+        }
+
+        BroadcastState.Board target = state.boardFor(board, "");
+        BroadcastState.Metric metric = new BroadcastState.Metric();
+        // The key is the label: that is what pairs a home row with an away row on a
+        // two-sided bar, and what keeps a repeated update from stacking up rows.
+        metric.key = label;
+        metric.label = label;
+        metric.side = sideId;
+        metric.value = value;
+        // Re-stating the same metric replaces it rather than stacking a second row:
+        // a score that goes 42 then 43 must leave one bar, not two.
+        final String resolvedSide = sideId;
+        target.rows.removeIf(existing -> existing != null
+                && label.equals(existing.key) && resolvedSide.equals(existing.side));
+        target.rows.add(metric);
+
+        plugin.broadcastState();
+        reply(sender, player, "command.stat.set", board, label,
+                sideId.isEmpty() ? "-" : sideId, format(value));
+    }
+
+    private void reportBoard(CommandSender sender, Player player,
+                             BroadcastState state, String board) {
+        BroadcastState.Board found = state.board(board);
+        if (found == null || found.rows.isEmpty()) {
+            reply(sender, player, "command.stat.empty", board);
+            return;
+        }
+        List<String> rows = new ArrayList<>();
+        for (BroadcastState.Metric metric : found.rows) {
+            rows.add(metric.label + (metric.side.isEmpty() ? "" : "@" + metric.side)
+                    + "=" + format(metric.value));
+        }
+        reply(sender, player, "command.stat.report", board, String.join(", ", rows));
+    }
+
+    private static String format(double value) {
+        return Math.abs(value - Math.rint(value)) < 0.05
+                ? String.valueOf(Math.round(value)) : String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    /**
+     * Completion for {@code /stevehud stat}.
+     *
+     * <p>Deliberately unhelpful about board names: the whole design is that a board
+     * key is just a string the operator invents and the editor then points an
+     * element at, so suggesting a fixed list would teach the wrong model. What it
+     * does suggest is what an operator cannot guess — the side ids, and
+     * {@code clear}.
+     */
+    private static List<String> statCompletions(BroadcastState state, String[] args) {
+        if (args.length == 2) {
+            List<String> keys = new ArrayList<>();
+            for (BroadcastState.Board board : state.getBoards()) {
+                if (board != null && !board.key.isEmpty()) {
+                    keys.add(board.key);
+                }
+            }
+            keys.add("clear");
+            return matching(keys, args[1]);
+        }
+        if (args.length == 3) {
+            return matching(List.of("1", "clear"), args[2]);
+        }
+        if (args.length >= 4) {
+            List<String> sides = new ArrayList<>();
+            for (BroadcastState.Side side : state.getSides()) {
+                sides.add("@" + side.id);
+            }
+            return matching(sides, args[args.length - 1]);
+        }
+        return List.of();
     }
 
     private void clock(CommandSender sender, Player player, String[] args) {
@@ -430,6 +577,9 @@ final class SteveHudCommand implements CommandExecutor, TabCompleter {
             return matching(SUBCOMMANDS, args[0]);
         }
         String sub = args[0].toLowerCase(Locale.ROOT);
+        if (sub.equals("stat")) {
+            return statCompletions(plugin.state(), args);
+        }
         if (args.length == 2) {
             return switch (sub) {
                 case "scene" -> matching(List.of(

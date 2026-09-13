@@ -23,7 +23,13 @@
 | 版面编辑器 | **网页端做全部编辑**（拖拽/缩放/图层/属性/动画/配色），游戏内只做预设切换（`/shudlayout`）。原计划的两套编辑器合并为一套 |
 | 游戏内 UI 库 | **不需要了**。设置界面用 ClothConfig，HUD 是自己的绘制层，版面编辑器在网页端——原来那个"UI 库选型"问题消失 |
 | ClothConfig 定位 | **仅客户端个人偏好**（缩放/透明/显隐/端口），不涉及内容编辑；**外部前置，不打包** |
-| 编辑器 UI 规范 | **Brutalism + Minimalist Monochrome**（用本地 `ui-ux-pro-max` 技能库定）：零圆角、无阴影无渐变、纯黑 `#000000`、层次只靠 1px 边框 + 中性灰阶 + 反白；强调色取自被编辑的版面包 |
+| 编辑器 UI 规范 | **打版台（dark console）**（用本地 `ui-ux-pro-max` 技能库定）：深色底 `#080a0f`、4px 圆角、层次只靠 1px 边框 + 中性灰阶；强调色取自被编辑的版面包，所以工具被它编辑的东西染色 |
+| 编辑器的页面布局 | **可改**：左右两栏可拖宽窄（180–640px）、双击折叠，状态存 localStorage；左栏「预设 / 图层 / 数据」，右栏「属性 / 主题 / JSON」，控制台贴底可折叠 |
+| **数据看板的元素类型** | 共 **16 种**：8 种常驻信息 + 8 种看板（`statCompare` / `leaderBoard` / `seriesChart` / `kpiTiles` / `rosterCard` / `seriesScore` / `timeline` / `headToHead`） |
+| **看板的数据形状** | **一种**：`Board{key,title,unit,rows:[Metric{key,label,sub,side,value,display,delta,state,index,time,series}]}`。所有看板从同一张表里取数，所以加第十种看板不动协议也不加命令 |
+| **元素级开放参数** | `Layout.Element.options: Map<String,String>`。渲染器认识的键有中文标签与控件；不认识的键**原样保留并往返**，所以"先在编辑器里存一个设置、渲染器以后再支持"是可行的顺序 |
+| **「不遮挡观看」** | **三条可执行预算**：单个未声明元素压进画面窗口 ≤2%、整场景 ≤3%（含已声明的中场大卡时 ≤70%）、文字缩到下限不得仍溢出。声明方式是元素自己的 `options.window = "allow"` |
+| 版面包预设 | **arena（竞技场）/ olympia（奥林匹亚）/ clean（边线）**，替换掉原来的 esports / olympic / minimal |
 | ✗ 不做 | 不内嵌 Chromium、不用游戏原生 GUI 做编辑器、不引入任何网络请求（字体/CDN） |
 
 ## 三、架构与"承重性质"
@@ -33,7 +39,7 @@ protocol/                     零 MC 依赖
   model/Layout.java           版面文档模型（三渲染器共用的唯一契约）
   model/Layouts.java          预设加载、归一化、回落
   model/BroadcastState.java   比赛状态（服务端拥有）
-  resources/stevehud/layout/  三份内置版面包：esports / olympic / minimal
+  resources/stevehud/layout/  三份内置版面包：arena / olympia / clean
 mod/common/                   零 MC 依赖
   client/SteveHudLink.java    链路状态机 + revision 追踪
   client/anim/Anim.java       墙钟动画运行时（13 个单测）
@@ -50,6 +56,7 @@ mod/client-mc/                碰 MC API 但跨版本不变
 mod/mc1.21.x/                 只放不可共享的 impl（目前只有 HudScale）
 plugin/                       Spigot/Paper 插件，一个 jar 通吃
 tools/web-preview.mjs         纯浏览器预览服务器（不需要开游戏）
+tools/overlay-audit.mjs       版面审计：无头浏览器量遮挡预算、文字裁切、元素重叠、页面报错
 ```
 
 **"零 MC 依赖"是承重性质，不是风格偏好。** 正因为 `protocol` 与 `mod/common` 不引用任何

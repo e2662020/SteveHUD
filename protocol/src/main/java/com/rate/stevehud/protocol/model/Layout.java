@@ -1,8 +1,10 @@
 package com.rate.stevehud.protocol.model;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -74,10 +76,34 @@ public final class Layout {
     /** A single line of text, either literal or read from the match state. */
     public static final String TYPE_TEXT = "text";
 
+    // ---- data boards --------------------------------------------------------
+    // Every board reads the same shape out of the match state: a named table of
+    // labelled metrics (see BroadcastState.Board). One data shape, nine boards,
+    // which is what keeps "add another panel" from being a protocol change.
+
+    /** Two-sided bars: one metric per row, each side growing out from the axis. */
+    public static final String TYPE_STAT_COMPARE = "statCompare";
+    /** Ranked table of names and values; the leader is picked out. */
+    public static final String TYPE_LEADER_BOARD = "leaderBoard";
+    /** Two series over time, one per side. */
+    public static final String TYPE_SERIES_CHART = "seriesChart";
+    /** A wall of single-number tiles. */
+    public static final String TYPE_KPI_TILES = "kpiTiles";
+    /** One side's line-up. */
+    public static final String TYPE_ROSTER_CARD = "rosterCard";
+    /** Per-game results of a best-of, plus the running tally. */
+    public static final String TYPE_SERIES_SCORE = "seriesScore";
+    /** Timestamped events, newest first. */
+    public static final String TYPE_TIMELINE = "timeline";
+    /** Two sides facing each other, with the series score between them. */
+    public static final String TYPE_HEAD_TO_HEAD = "headToHead";
+
     /** Every type a renderer is expected to draw. */
     public static final List<String> TYPES = List.of(
             TYPE_MATCH_BUG, TYPE_EVENT_INFO, TYPE_TIMER, TYPE_LOWER_THIRD,
-            TYPE_TICKER, TYPE_ANNOUNCEMENT, TYPE_FRAME, TYPE_TEXT);
+            TYPE_TICKER, TYPE_ANNOUNCEMENT, TYPE_FRAME, TYPE_TEXT,
+            TYPE_STAT_COMPARE, TYPE_LEADER_BOARD, TYPE_SERIES_CHART, TYPE_KPI_TILES,
+            TYPE_ROSTER_CARD, TYPE_SERIES_SCORE, TYPE_TIMELINE, TYPE_HEAD_TO_HEAD);
 
     // ---- anchors ------------------------------------------------------------
 
@@ -254,6 +280,28 @@ public final class Layout {
         public String text = "";
         /** {@link Layout#TYPE_TEXT} only: a path into the match state, e.g. {@code sides[0].score}. */
         public String binding = "";
+
+        /**
+         * Per-element settings, interpreted by the element's own renderer.
+         *
+         * <p>This is the extension point that keeps a new board from being a new
+         * class in three languages. A board reads named keys out of here —
+         * {@code board} (which data table to draw), {@code cols}, {@code maxRows},
+         * {@code title}, and so on. The schema is deliberately open: a key nothing
+         * understands is kept and round-tripped rather than rejected, so the
+         * editor can save a setting before the renderer that consumes it exists.
+         *
+         * <p>Values are strings because the documents are hand-edited as often as
+         * they are generated, and a colour, a count and a caption all being
+         * strings keeps the JSON readable and the merge rules trivial. A renderer
+         * parses what it needs and falls back to a default for anything it cannot.
+         *
+         * <p>One key is load-bearing beyond its element: {@code window=allow}
+         * declares that this element may sit inside the gameplay window (the
+         * centre of the frame). Anything without it that reaches the middle is a
+         * fault, and {@code tools/overlay-audit.mjs} fails the build over it.
+         */
+        public Map<String, String> options = new LinkedHashMap<>();
 
         public Style style = new Style();
         public Motion anim = new Motion();

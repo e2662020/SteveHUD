@@ -1,5 +1,5 @@
 {
-  "command.usage": "&6[SteveHUD] &rUsage: /stevehud <status|resend|scene|score|clock|announce|ticker|lower3|event|stage|demo|reset>",
+  "command.usage": "&6[SteveHUD] &rUsage: /stevehud <status|resend|scene|score|clock|announce|ticker|lower3|stat|event|stage|demo|reset>",
   "command.unknown": "&6[SteveHUD] &rUnknown subcommand &e%s&r.",
   "command.config": "&6[SteveHUD] &rThe settings screen is a client command: type &e/shudconfig&r in game. The server cannot open it, because those settings belong to your own client.",
   "command.no_such_side": "&6[SteveHUD] &rNo such side. Available: &e%s",
@@ -38,5 +38,13 @@
   "command.layout.cleared": "&6[SteveHUD] &rServer-wide package cleared. Every client is back to its own local package.",
   "command.layout.presets": "&6[SteveHUD] &rPackages: &e%s",
   "command.layout.unknown": "&6[SteveHUD] &rNo such package: &e%s&r. Available: &e%s",
-  "command.layout.usage": "&6[SteveHUD] &rUsage: /stevehud layout <show|preset <name>|clear>"
+  "command.layout.usage": "&6[SteveHUD] &rUsage: /stevehud layout <show|preset <name>|clear>",
+
+  "command.stat.usage": "&6[SteveHUD] &rUsage: /stevehud stat <board> <value> <label...> [@side], or /stevehud stat <board> clear, or /stevehud stat clear",
+  "command.stat.set": "&6[SteveHUD] &rBoard &e%s&r: &e%s&r (%s) = &e%s",
+  "command.stat.report": "&6[SteveHUD] &rBoard &e%s&r: %s",
+  "command.stat.empty": "&6[SteveHUD] &rBoard &e%s&r has no rows yet. Elements pointing at it collapse rather than drawing an empty frame.",
+  "command.stat.cleared": "&6[SteveHUD] &rBoard &e%s&r cleared.",
+  "command.stat.cleared_all": "&6[SteveHUD] &rAll board data cleared.",
+  "command.stat.invalid_value": "&6[SteveHUD] &r&e%s&r is not a number."
 }

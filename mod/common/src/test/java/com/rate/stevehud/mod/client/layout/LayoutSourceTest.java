@@ -52,15 +52,15 @@ class LayoutSourceTest {
         LayoutSource source = source();
         String localName = source.local().name;
 
-        Layout olympic = Layouts.load(Layouts.PRESET_OLYMPIC);
-        assertTrue(source.acceptServer(olympic, "奥运", "__RATE__"));
+        Layout olympic = Layouts.load(Layouts.PRESET_OLYMPIA);
+        assertTrue(source.acceptServer(olympic, "奥林匹亚", "__RATE__"));
 
         assertEquals(LayoutSource.SCOPE_SERVER, source.scope());
         assertEquals(olympic.name, source.effective().name,
                 "the server's package is what every client must draw");
         // And the local document is untouched, so the operator's own work survives.
         assertEquals(localName, source.local().name);
-        assertEquals("奥运", source.onAirName());
+        assertEquals("奥林匹亚", source.onAirName());
         assertEquals("__RATE__", source.serverAuthor());
 
         assertTrue(source.acceptServer(null, "", ""));
@@ -87,7 +87,7 @@ class LayoutSourceTest {
     @DisplayName("a disconnecting server leaves nothing of itself behind")
     void clearOnDisconnect() {
         LayoutSource source = source();
-        source.acceptServer(Layouts.load(Layouts.PRESET_MINIMAL), "极简", "op");
+        source.acceptServer(Layouts.load(Layouts.PRESET_CLEAN), "边线", "op");
         assertTrue(source.serverActive());
 
         // The package belonged to that server. Carrying it into the next one would
@@ -122,10 +122,10 @@ class LayoutSourceTest {
     @DisplayName("reporting whether anything changed, so the caller can skip a broadcast")
     void reportsChanges() {
         LayoutSource source = source();
-        Layout olympic = Layouts.load(Layouts.PRESET_OLYMPIC);
+        Layout olympic = Layouts.load(Layouts.PRESET_OLYMPIA);
 
-        assertTrue(source.acceptServer(olympic, "奥运", "op"), "setting one is a change");
-        assertFalse(source.acceptServer(olympic, "奥运", "op"), "setting the same one is not");
+        assertTrue(source.acceptServer(olympic, "奥林匹亚", "op"), "setting one is a change");
+        assertFalse(source.acceptServer(olympic, "奥林匹亚", "op"), "setting the same one is not");
         assertTrue(source.acceptServer(null, "", ""), "clearing is a change");
         assertFalse(source.acceptServer(null, "", ""), "clearing twice is not");
     }

@@ -127,13 +127,24 @@ public final class WebBridge {
             public String presetsJson() {
                 JsonArray names = new JsonArray();
                 JsonObject labels = new JsonObject();
+                JsonObject themes = new JsonObject();
                 for (String name : Layouts.presetNames()) {
                     names.add(name);
                     labels.addProperty(name, Layouts.presetLabel(name));
+                    // Each package's palette, read WITHOUT applying it.
+                    //
+                    // The editor paints a row of swatches per package, and the
+                    // obvious way to get those colours is GET /api/layout?preset=.
+                    // That request is a write — it switches the package on air —
+                    // so opening the editor would have walked the live broadcast
+                    // through every preset in the list. Reading the resource
+                    // directly is the fix; the swatch is not worth a scene change.
+                    themes.add(name, GSON.toJsonTree(Layouts.load(name).theme));
                 }
                 JsonObject root = new JsonObject();
                 root.add("presets", names);
                 root.add("labels", labels);
+                root.add("themes", themes);
                 root.addProperty("current", layouts.store().preset());
                 // Which scope is on air, so the editor can say plainly that a server
                 // package is winning and that editing the local one will not show.
@@ -293,7 +304,7 @@ public final class WebBridge {
 
     /** Which built-in package the local document came from. */
     public static String preset() {
-        return layouts == null ? Layouts.PRESET_ESPORTS : layouts.store().preset();
+        return layouts == null ? Layouts.PRESET_ARENA : layouts.store().preset();
     }
 
     /** Switches the local package, or returns false when {@code name} is not one that ships. */

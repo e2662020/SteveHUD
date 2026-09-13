@@ -43,7 +43,7 @@ public final class LayoutStore {
 
     private volatile Layout current;
     private volatile String savedJson = "";
-    private volatile String preset = Layouts.PRESET_ESPORTS;
+    private volatile String preset = Layouts.PRESET_ARENA;
 
     /**
      * @param file where the document lives; its parent is created if needed

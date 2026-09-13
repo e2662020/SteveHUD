@@ -43,10 +43,10 @@ class LayoutStoreTest {
 
         Path file = configDir.resolve("stevehud/layout.json");
         assertTrue(Files.isRegularFile(file), "a file should exist after the first load");
-        assertEquals(Layouts.PRESET_ESPORTS, store.preset());
+        assertEquals(Layouts.PRESET_ARENA, store.preset());
         assertFalse(store.current().elements.isEmpty());
         assertEquals(store.current().elements.size(),
-                Layouts.load(Layouts.PRESET_ESPORTS).elements.size());
+                Layouts.load(Layouts.PRESET_ARENA).elements.size());
     }
 
     @Test
@@ -72,7 +72,7 @@ class LayoutStoreTest {
         LayoutStore store = store();
         store.load();
 
-        Layout edited = Layouts.load(Layouts.PRESET_MINIMAL);
+        Layout edited = Layouts.load(Layouts.PRESET_CLEAN);
         edited.name = "我的包装";
 
         Layout accepted = store.accept(Layouts.toJson(edited));
@@ -120,16 +120,16 @@ class LayoutStoreTest {
         LayoutStore store = store();
         store.load();
 
-        Layout olympic = store.applyPreset(Layouts.PRESET_OLYMPIC);
+        Layout olympic = store.applyPreset(Layouts.PRESET_OLYMPIA);
 
         assertNotNull(olympic);
-        assertEquals(Layouts.PRESET_OLYMPIC, store.preset());
+        assertEquals(Layouts.PRESET_OLYMPIA, store.preset());
         Layout onDisk = Layouts.fromJson(readFile());
         assertNotNull(onDisk, "the new preset should have been written out");
-        assertEquals(Layouts.load(Layouts.PRESET_OLYMPIC).name, onDisk.name);
+        assertEquals(Layouts.load(Layouts.PRESET_OLYMPIA).name, onDisk.name);
         // A package the model does not ship must not be silently accepted.
         assertNull(store.applyPreset("no-such-package"));
-        assertEquals(Layouts.PRESET_OLYMPIC, store.preset(), "and must not change the preset");
+        assertEquals(Layouts.PRESET_OLYMPIA, store.preset(), "and must not change the preset");
     }
 
     @Test
@@ -139,7 +139,7 @@ class LayoutStoreTest {
         store.load();
         assertFalse(store.fileChangedSinceRead(), "nothing has changed yet");
 
-        Layout handEdited = Layouts.load(Layouts.PRESET_MINIMAL);
+        Layout handEdited = Layouts.load(Layouts.PRESET_CLEAN);
         handEdited.name = "改过的";
         Files.writeString(configDir.resolve("stevehud/layout.json"),
                 Layouts.toPrettyJson(handEdited), StandardCharsets.UTF_8);

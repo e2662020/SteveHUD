@@ -1,0 +1,441 @@
+{
+  "version": 1,
+  "name": "奥林匹亚 · Olympia",
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "theme": {
+    "accent": "#C8961E",
+    "live": "#C62828",
+    "ink": "#121A2A",
+    "inkDim": "#5A6680",
+    "panelTop": "#FFFFFFF2",
+    "panelBottom": "#EDF2F9F7",
+    "border": "#121A2A1F",
+    "home": "#1B4FD8",
+    "away": "#C0392B",
+    "font": ""
+  },
+  "safe": {
+    "x": 40,
+    "y": 45
+  },
+  "elements": [
+    {
+      "id": "frame",
+      "type": "frame",
+      "label": "安全框",
+      "visible": false,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "topLeft",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "arms": "true",
+        "bar": "true"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "none",
+        "update": "none",
+        "durationMs": 0,
+        "easing": "linear"
+      }
+    },
+    {
+      "id": "ticker",
+      "type": "ticker",
+      "label": "信息条",
+      "visible": true,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "bottomLeft",
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 52,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "mode": "scroll",
+        "flag": "赛况"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "none",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "bug",
+      "type": "matchBug",
+      "label": "比分角标",
+      "visible": true,
+      "scenes": [],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 45,
+      "width": 360,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "clock": "match",
+        "showLive": "true",
+        "liveText": "直播"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "event",
+      "type": "eventInfo",
+      "label": "赛事信息",
+      "visible": true,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 45,
+      "width": 420,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "caption",
+      "type": "text",
+      "label": "项目说明",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "bottomLeft",
+      "x": 40,
+      "y": 96,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "text": "",
+      "binding": "event.stage",
+      "options": {
+        "variant": "micro"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "none",
+        "durationMs": 380,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "clock",
+      "type": "timer",
+      "label": "计时器",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 0,
+      "width": 250,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "showDot": "false"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "flash",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "series",
+      "type": "seriesScore",
+      "label": "赛程板",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 230,
+      "width": 348,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "series",
+        "title": "赛程"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "pop",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "timeline",
+      "type": "timeline",
+      "label": "关键时刻",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 135,
+      "width": 380,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "timeline",
+        "title": "关键时刻",
+        "order": "desc"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideRight",
+        "update": "pop",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "roster",
+      "type": "rosterCard",
+      "label": "阵容卡",
+      "visible": true,
+      "scenes": [
+        "compact"
+      ],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 96,
+      "width": 500,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "cols": "5"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideRight",
+        "update": "none",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "compare",
+      "type": "statCompare",
+      "label": "数据对比",
+      "visible": true,
+      "scenes": [
+        "compact"
+      ],
+      "anchor": "bottomLeft",
+      "x": 40,
+      "y": 0,
+      "width": 480,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "compare",
+        "showLabel": "true"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "pop",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "lower",
+      "type": "lowerThird",
+      "label": "选手条",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "bottomLeft",
+      "x": 40,
+      "y": 0,
+      "width": 768,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "pop",
+        "durationMs": 550,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "h2h",
+      "type": "headToHead",
+      "label": "对阵卡",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": -110,
+      "width": 660,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "vs": "VS",
+        "subtitle": "决赛",
+        "window": "allow"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "scaleIn",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outBack"
+      }
+    },
+    {
+      "id": "kpi",
+      "type": "kpiTiles",
+      "label": "关键数据",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": 150,
+      "width": 660,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "totals",
+        "cols": "4",
+        "window": "allow"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "announce",
+      "type": "announcement",
+      "label": "公告",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": -340,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "window": "allow"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "scaleIn",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outBack"
+      }
+    }
+  ]
+}

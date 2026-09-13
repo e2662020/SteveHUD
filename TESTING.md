@@ -26,11 +26,26 @@
 |---|---|---|
 | A1 | `smoke-test.ps1` | 退出码 `0`，输出 `SMOKE TEST: PASS` |
 | A2 | 探针断言 | `RESULT: PASS (11 checks)` |
-| A3 | 单元测试 | `./gradlew :protocol:test :mod:common:test` → **101 个测试**全过（协议 33 + 共享 68） |
+| A3 | 单元测试 | `./gradlew :protocol:test :mod:common:test` → **117 个测试**全过（协议 34 + 共享 83） |
 | A4 | 负向对照 | `cd tools/protocol-probe; $env:SKIP_REGISTER=1; node probe.mjs` → **同样 PASS**（断言相反） |
 | A5 | 四版本构建 | `./gradlew build` → 四个 mod jar + 一个插件 jar |
+| A6 | 版面审计 | `node tools/overlay-audit.mjs --all` → **6 种「预设 × 场景」组合全部 PASS** |
+| A7 | 页面探针 | `node tools/web-probe.mjs --url http://127.0.0.1:8788/editor/ --js "document.title"` → 退出码 `0`，不打印任何页面报错 |
 
 A4 的语义别读反：它断言「不注册就收不到」，规则成立时它就通过。
+
+A6 是这一版新增的一条独立通道，值得单独说：它用一个**真实的**无头 Edge/Chrome 加载每一套
+预设的每一个场景，然后**量**出来——每个元素的矩形、两两之间有没有重叠、画面窗口和整幅画面的
+遮挡比例、哪些文本触发了自适应缩放、缩到下限还在溢出的是哪几条字符串、页面报了什么错。
+理由是「看着挺好」不是一条能在下一套预设上依然成立的检查。退出码可直接进 CI；
+`--json` 给机器读，默认输出给人读；单跑一套用 `--preset arena --scene compact`。
+
+它需要预览服务器（不需要开游戏）：
+
+```powershell
+node tools\web-preview.mjs --port 8788 --preset arena   # 一个终端
+node tools\overlay-audit.mjs --all                        # 另一个终端
+```
 
 ---
 
@@ -55,7 +70,10 @@ config/stevehud/layout.json      ← 版面的唯一真相（首次运行自动�
 
 比分初始为 0，需要主动给分：`/stevehud score home +1`（第五章）。
 
-### 2.1 七种元素各就各位
+### 2.1 十六种元素各就各位
+
+常驻信息层 8 种（B1–B8），数据看板层 8 种（B9–B15，需要一个数据源才出现，
+下面用 `/stevehud stat` 喂）。
 
 | # | 检查 | 预期 |
 |---|---|---|
@@ -67,6 +85,14 @@ config/stevehud/layout.json      ← 版面的唯一真相（首次运行自动�
 | B6 | 底边 跑马灯 | `/stevehud ticker ...` 后通栏匀速滚动；为空时整条收起 |
 | B7 | 正中 公告 | `/stevehud announce ...` 后出现，两侧横线向外生长 |
 | B8 | 视口安全框 | 四角括号；有跑马灯时下边框上移到跑马灯上沿，读起来是个完整矩形 |
+| B9 | `/stevehud stat compare 42 击杀 @home` + `... 37 击杀 @away` | 「数据对比」出现一根从中轴往两边长的条，两侧数字分别是 42 / 37 |
+| B10 | `/stevehud stat kills 14 Uzi` … | 「排行榜」按数值从大到小，前 3 名点亮成强调色 |
+| B11 | `/stevehud stat totals 79 总击杀` | 「关键指标」出现一格磁贴；再喂 3 条会补满一行 |
+| B12 | `/stevehud stat timeline 0 首杀 · Uzi` 之类 | 「事件时间轴」按时间倒序，行首是时间、行中是彩点 |
+| B13 | `/stevehud stat series 1 G1` … | 「局分板」逐局列出，底部是总比分；`state=live` 的那局高亮 |
+| B14 | 阵容卡 / 对阵卡 / 趋势曲线 | 阵容卡读 `sides[].competitors`；对阵卡读两侧战绩；趋势曲线读 `sides[].series` |
+| B15 | `/stevehud stat <任一板> clear` | 那块板**整块收掉**，画面上不留空框 |
+| B16 | 编辑器左下「数据」页 | 列出当前所有看板的 key 与前几行内容，照抄即可填进元素的「数据源」 |
 
 ### 2.2 锚点缩放（这一版的重点）
 
@@ -85,9 +111,9 @@ B9–B11 是验收线：**如果缩放时元素往画面中间跑，就是这里
 | # | 检查 | 预期 |
 |---|---|---|
 | B12 | `/shudlayout` | 报出当前版面名、预设名、元素个数、文件路径 |
-| B13 | `/shudlayout list` | 列出 `esports / olympic / minimal` |
-| B14 | `/shudlayout olympic` | **整个服务器的观感当场全换**（金主色、白面板、顶部项目字幕）；浏览器包装页同步换 |
-| B15 | `/shudlayout minimal` | 只剩角标、计时器、跑马灯 |
+| B13 | `/shudlayout list` | 列出 `arena / olympia / clean` |
+| B14 | `/shudlayout olympia` | **整个服务器的观感当场全换**（金色强调、浅色面板、项目说明字幕）；浏览器包装页同步换 |
+| B15 | `/shudlayout clean` | 只剩角标、计时器与两条贴边数据 |
 | B16 | 手工改 `layout.json`（比如把某个 `x` 改大 100） | **约 1 秒内自动重载并广播**，不用重启、不用敲命令 |
 | B17 | 手工把 `layout.json` 改成非法 JSON | 回落到内置预设继续画，**日志有警告，且你的文件没有被覆盖** |
 | B18 | `/shudlayout reload` | 重新从磁盘读取并广播 |
@@ -145,7 +171,7 @@ C3–C5 只影响**你自己这一台**。比赛内容与版面样式不在这�
 | E5 | `/stevehudhud` | `/shudh` | 开关游戏内 HUD（等同于设置里的那一项） |
 | E6 | `/stevehudlayout` | `/shudlay` `/shudlayout` | 报当前版面：名字、预设、元素个数、文件路径 |
 | E7 | `/shudlayout list` | — | 列出可用预设 |
-| E8 | `/shudlayout olympic` | — | 切换预设（**立即存盘并广播给所有人**） |
+| E8 | `/shudlayout olympia` | — | 切换预设（**立即存盘并广播给所有人**） |
 | E9 | `/shudlayout reload` | — | 从磁盘重新读取版面 |
 | E10 | 按 `Tab` 补全 | — | 预设名可以补全；命令名本身也有短写补全 |
 
@@ -154,7 +180,7 @@ C3–C5 只影响**你自己这一台**。比赛内容与版面样式不在这�
 | E11 | `/shudl` | 报 `协议 v3`，且 revision 会随后续命令增长 |
 | E12 | `/shudlayout` | 三行：版面状态、文件路径、提示 |
 | E13 | `/shudlayout nope` | 提示没有这个预设，并列出可用的 |
-| E14 | `/shudlayout olympic` 后看别人屏幕 | 观感一致（状态与版面都由服务端/文档统一） |
+| E14 | `/shudlayout olympia` 后看别人屏幕 | 观感一致（状态与版面都由服务端/文档统一） |
 | E15 | 未连服务端时 `/shudl` | 提示尚未连接，不报错 |
 
 ---
@@ -179,7 +205,7 @@ C3–C5 只影响**你自己这一台**。比赛内容与版面样式不在这�
 | E27 | `/stevehud demo` | **40 秒脚本化演示**：把比分、两侧选手条、两次公告、跑马灯、计时全部依次走一遍 |
 | E28 | `/stevehud reset` | 回到初始状态 |
 | E29 | `/stevehud layout` | 报全服版面：名字与设定者，或「未设定」 |
-| E30 | `/stevehud layout preset olympic` | **设定全服版面**：所有客户端与包装页改画它 |
+| E30 | `/stevehud layout preset olympia` | **设定全服版面**：所有客户端与包装页改画它 |
 | E31 | `/stevehud layout clear` | 清除全服版面，各客户端回到本机版面 |
 
 | # | 检查 | 预期 |
@@ -220,14 +246,14 @@ E29–E31 属于**全服版面**，同样只有服务端能改——理由见第
 | F2 | 在编辑器里拖动并保存 | 生效：**他自己**的游戏内 HUD 和 OBS 包装页都变了 |
 | F3 | 另一个玩家看自己的屏幕 | **没变**——本机版面不影响别人 |
 | F4 | 非管理员 `/shudw` `/shudc` `/shudh` `/shudlayout` | 都能用（都是个人偏好） |
-| F5 | 管理员 `/stevehud layout preset olympic` | **所有人的 HUD 与包装页当场换成奥运版面包** |
+| F5 | 管理员 `/stevehud layout preset olympia` | **所有人的 HUD 与包装页当场换成奥林匹亚版面包** |
 | F6 | 此时非管理员 `/shudlayout` | 第二行报「当前生效的是**全服版面**（由 X 设定）」 |
 | F7 | 此时非管理员改本机版面并保存 | 画面上**看不到变化**——而且命令与编辑器都会明说原因 |
 | F8 | 编辑器在全服版面生效时 | 画布上方出现橙色横幅，写明"全服版面生效中，你的改动暂不显示" |
 | F9 | 管理员 `/stevehud layout clear` | 所有人回到各自的本机版面 |
 | F10 | 全服版面生效时退出再重进服务器 | 版面还在（服务端持有） |
 | F11 | 换到另一个没有插件的服务器 | 全服版面**不会**跟过去（掉线时客户端会清掉它） |
-| F12 | 非管理员 `/stevehud layout preset olympic` | 被权限拦掉，提示需要管理员 |
+| F12 | 非管理员 `/stevehud layout preset olympia` | 被权限拦掉，提示需要管理员 |
 
 F7 与 F8 是这一版专门做的：**不告诉运营"你改的暂时看不到"，他会以为编辑器坏了**，
 然后反复拖拽一个其实正常工作的东西。

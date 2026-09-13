@@ -36,15 +36,26 @@ public final class ElementMetrics {
      * they contain or from the viewport, so there is no box to fit into and the
      * ratio is 1.
      */
-    private static final Map<String, Integer> REFERENCE_WIDTH = Map.of(
-            Layout.TYPE_MATCH_BUG, 346,
-            Layout.TYPE_EVENT_INFO, 432,
-            Layout.TYPE_TIMER, 260,
-            Layout.TYPE_LOWER_THIRD, 768,
-            Layout.TYPE_TICKER, 1920,
-            Layout.TYPE_ANNOUNCEMENT, 0,
-            Layout.TYPE_FRAME, 0,
-            Layout.TYPE_TEXT, 0);
+    private static final Map<String, Integer> REFERENCE_WIDTH = Map.ofEntries(
+            Map.entry(Layout.TYPE_MATCH_BUG, 348),
+            Map.entry(Layout.TYPE_EVENT_INFO, 432),
+            Map.entry(Layout.TYPE_TIMER, 264),
+            Map.entry(Layout.TYPE_LOWER_THIRD, 768),
+            Map.entry(Layout.TYPE_TICKER, 1920),
+            Map.entry(Layout.TYPE_ANNOUNCEMENT, 0),
+            Map.entry(Layout.TYPE_FRAME, 0),
+            Map.entry(Layout.TYPE_TEXT, 0),
+            // Data boards. These must equal REFERENCE_WIDTH in the browser
+            // overlay, which is what stops a box resized in the editor from
+            // scaling its type in one renderer and not the other.
+            Map.entry(Layout.TYPE_STAT_COMPARE, 420),
+            Map.entry(Layout.TYPE_LEADER_BOARD, 360),
+            Map.entry(Layout.TYPE_SERIES_CHART, 430),
+            Map.entry(Layout.TYPE_KPI_TILES, 480),
+            Map.entry(Layout.TYPE_ROSTER_CARD, 520),
+            Map.entry(Layout.TYPE_SERIES_SCORE, 360),
+            Map.entry(Layout.TYPE_TIMELINE, 380),
+            Map.entry(Layout.TYPE_HEAD_TO_HEAD, 560));
 
     private ElementMetrics() {
     }

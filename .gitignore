@@ -23,6 +23,10 @@ out/
 web/node_modules/
 web/dist/
 
+# Screenshots from tools/overlay-shot.mjs: regenerable, and not worth carrying
+# a few hundred kilobytes of PNG per preset in the history.
+.shots/
+
 # Local test server: keep the configuration, ignore everything it generates.
 test-server/*.jar
 test-server/plugins/*.jar

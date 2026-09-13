@@ -1,0 +1,408 @@
+{
+  "version": 1,
+  "name": "竞技场 · Arena",
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "theme": {
+    "accent": "#2BE8C4",
+    "live": "#FF3B5C",
+    "ink": "#F1F7FF",
+    "inkDim": "#8FA0B6",
+    "panelTop": "#0E1A26F2",
+    "panelBottom": "#050A11FA",
+    "border": "#FFFFFF26",
+    "home": "#2FD8FF",
+    "away": "#FF4D7A",
+    "font": ""
+  },
+  "safe": {
+    "x": 40,
+    "y": 45
+  },
+  "elements": [
+    {
+      "id": "frame",
+      "type": "frame",
+      "label": "安全框",
+      "visible": false,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "topLeft",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "arms": "true",
+        "bar": "false"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "none",
+        "update": "none",
+        "durationMs": 0,
+        "easing": "linear"
+      }
+    },
+    {
+      "id": "ticker",
+      "type": "ticker",
+      "label": "信息条",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomLeft",
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 54,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "mode": "scroll",
+        "flag": "LIVE",
+        "showFlag": "true"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "none",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "bug",
+      "type": "matchBug",
+      "label": "比分角标",
+      "visible": true,
+      "scenes": [],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 45,
+      "width": 348,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "clock": "wall",
+        "showLive": "true"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "event",
+      "type": "eventInfo",
+      "label": "赛事信息",
+      "visible": true,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 45,
+      "width": 432,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "chart",
+      "type": "seriesChart",
+      "label": "经济曲线",
+      "visible": true,
+      "scenes": [
+        "compact"
+      ],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 230,
+      "width": 348,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "title": "经济差",
+        "area": "true",
+        "window": "40",
+        "axis": "开局|现在"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "none",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "series",
+      "type": "seriesScore",
+      "label": "局分板",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 135,
+      "width": 360,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "series",
+        "title": "赛程"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideRight",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "roster",
+      "type": "rosterCard",
+      "label": "阵容卡",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 200,
+      "width": 440,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "cols": "5"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideRight",
+        "update": "none",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "clock",
+      "type": "timer",
+      "label": "计时器",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 0,
+      "width": 264,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "flash",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "board",
+      "type": "leaderBoard",
+      "label": "击杀榜",
+      "visible": true,
+      "scenes": [
+        "compact"
+      ],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 104,
+      "width": 330,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "kills",
+        "title": "击杀榜",
+        "nameLabel": "选手",
+        "valueLabel": "K",
+        "highlight": "3"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideRight",
+        "update": "pop",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "compare",
+      "type": "statCompare",
+      "label": "数据对比",
+      "visible": true,
+      "scenes": [
+        "compact"
+      ],
+      "anchor": "bottomLeft",
+      "x": 40,
+      "y": 0,
+      "width": 470,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "compare",
+        "showLabel": "true"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "pop",
+        "durationMs": 460,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "lower",
+      "type": "lowerThird",
+      "label": "选手条",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "bottomLeft",
+      "x": 40,
+      "y": 0,
+      "width": 768,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {},
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "pop",
+        "durationMs": 550,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "kpi",
+      "type": "kpiTiles",
+      "label": "关键数据",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": 196,
+      "width": 660,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "board": "totals",
+        "cols": "3",
+        "window": "allow"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "announce",
+      "type": "announcement",
+      "label": "公告",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": -168,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "options": {
+        "window": "allow"
+      },
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "scaleIn",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outBack"
+      }
+    }
+  ]
+}

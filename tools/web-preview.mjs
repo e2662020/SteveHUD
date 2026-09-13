@@ -26,7 +26,7 @@
 //
 // Usage:
 //   node tools/web-preview.mjs
-//   node tools/web-preview.mjs --port 8080 --preset olympic
+//   node tools/web-preview.mjs --port 8080 --preset olympia
 //
 // Then open http://127.0.0.1:8788/overlay/ (and /editor/ for the editor).
 //
@@ -51,13 +51,13 @@ function arg(name, fallback) {
 }
 
 const PORT = Number(arg('port', 8788));
-const PRESET = arg('preset', 'esports');
-const PRESETS = ['esports', 'olympic', 'minimal'];
+const PRESET = arg('preset', 'arena');
+const PRESETS = ['arena', 'olympia', 'clean'];
 
 const PRESET_LABELS = {
-  esports: "电竞",
-  olympic: "奥运",
-  minimal: "极简",
+  arena: "竞技场",
+  olympia: "奥林匹亚",
+  clean: "边线",
 };
 
 if (!fs.existsSync(WEB_ROOT)) {
@@ -82,24 +82,110 @@ let preset = PRESET;
 // ---- the match state -------------------------------------------------------
 // Shaped exactly as the mod publishes it, so what works here works in game.
 
+/* The canned match carries the same shape the mod publishes, data boards
+   included, so a package designed here is a package the game will draw. The
+   names are deliberately long and mixed-script: a preview that only ever shows
+   "T1" never exercises the text fitting, which is exactly where a package
+   breaks on air. */
+const LONG_HOME = '皇家马德里电子竞技俱乐部';
+const LONG_AWAY = 'Natus Vincere Junior Academy';
+
+function series(values) { return values; }
+
 const state = {
   rev: 1,
   scene: 'full',
-  event: { name: '春季联赛 决赛', stage: 'BO3 · 第 1 局' },
+  event: { name: '春季联赛 总决赛', stage: 'BO5 · 第 3 局 · 决胜图' },
   sides: [
     {
-      id: 'home', name: '主队', short: 'HOM', color: '#4C9AFF', score: 0,
-      competitors: [{ name: '选手一', number: '07' }],
+      id: 'home', name: LONG_HOME, short: 'RMA', color: '#2FD8FF', score: 2,
+      record: '14 - 3', series: series([0, 1200, 2400, 3100, 2900, 4200, 5600, 6800, 8100, 9400]),
+      competitors: [
+        { name: 'ClearLove', number: '07' },
+        { name: 'Uzi', number: '11' },
+        { name: 'Ming', number: '22' },
+        { name: 'Xiaohu', number: '03' },
+        { name: 'Bin', number: '19' },
+      ],
     },
     {
-      id: 'away', name: '客队', short: 'AWY', color: '#FF6B6B', score: 0,
-      competitors: [{ name: '选手二', number: '11' }],
+      id: 'away', name: LONG_AWAY, short: 'NAV', color: '#FF4D7A', score: 1,
+      record: '11 - 6', series: series([0, 900, 1800, 3600, 4100, 3900, 4700, 5200, 6100, 7000]),
+      competitors: [
+        { name: 's1mple', number: '01' },
+        { name: 'b1t', number: '08' },
+        { name: 'jL', number: '13' },
+        { name: 'iM', number: '21' },
+        { name: 'Aleksib', number: '04' },
+      ],
     },
   ],
-  clock: { label: '比赛计时', value: '00:00', running: false },
-  ticker: ['欢迎收看春季联赛决赛', '图形由服务端统一控制，所有客户端显示一致'],
+  clock: { label: '比赛计时', value: '24:18', running: true },
+  ticker: [
+    '欢迎收看春季联赛总决赛 · 图形由服务端统一控制，所有客户端显示一致',
+    '第 3 局进行中 · 主队手握赛点',
+  ],
   announcement: { title: '', subtitle: '', visible: false },
   lowerThird: { visible: false, side: '' },
+
+  /* Data boards. One shape for every panel in the package: a keyed table of
+     labelled metrics. A board with no rows draws nothing at all, so a package
+     can ship with every panel configured and only the fed ones appear. */
+  boards: [
+    {
+      key: 'compare', title: '数据对比', unit: '',
+      rows: [
+        { key: 'kills', label: '击杀', side: 'home', value: 42, display: '42' },
+        { key: 'kills', label: '击杀', side: 'away', value: 37, display: '37' },
+        { key: 'gold', label: '经济', side: 'home', value: 68400, display: '68.4K' },
+        { key: 'gold', label: '经济', side: 'away', value: 61200, display: '61.2K' },
+        { key: 'towers', label: '防御塔', side: 'home', value: 8, display: '8' },
+        { key: 'towers', label: '防御塔', side: 'away', value: 5, display: '5' },
+        { key: 'dragons', label: '元素龙', side: 'home', value: 3, display: '3' },
+        { key: 'dragons', label: '元素龙', side: 'away', value: 2, display: '2' },
+      ],
+    },
+    {
+      key: 'kills', title: '击杀榜', unit: 'K',
+      rows: [
+        { key: 'p1', label: 'Uzi', sub: 'RMA · 射手', value: 14, display: '14' },
+        { key: 'p2', label: 's1mple', sub: 'NAV · 狙击', value: 12, display: '12' },
+        { key: 'p3', label: 'ClearLove', sub: 'RMA · 打野', value: 9, display: '9' },
+        { key: 'p4', label: 'b1t', sub: 'NAV · 步枪', value: 7, display: '7' },
+        { key: 'p5', label: 'Xiaohu', sub: 'RMA · 中路', value: 5, display: '5' },
+      ],
+    },
+    {
+      key: 'totals', title: '关键数据', unit: '',
+      rows: [
+        { key: 't1', label: '总击杀', value: 79, display: '79', delta: 5 },
+        { key: 't2', label: '平均经济', value: 64800, display: '64.8K', delta: -1200 },
+        { key: 't3', label: '首杀率', value: 62, display: '62', unit: '%' },
+        { key: 't4', label: '大龙控制', value: 3, display: '3', unit: '条' },
+      ],
+    },
+    {
+      key: 'series', title: '赛程', unit: '',
+      rows: [
+        { key: 'g1', index: 'G1', label: '裂谷之心', value: 1, display: '1 – 0', state: 'done' },
+        { key: 'g2', index: 'G2', label: '黑色港湾', value: 0, display: '0 – 1', state: 'done' },
+        { key: 'g3', index: 'G3', label: '苍穹之顶', value: 1, display: '进行中', state: 'live' },
+        { key: 'g4', index: 'G4', label: '待定', value: 0, display: '—', state: 'todo' },
+        { key: 'g5', index: 'G5', label: '待定', value: 0, display: '—', state: 'todo' },
+      ],
+    },
+    {
+      key: 'timeline', title: '关键时刻', unit: '',
+      rows: [
+        { key: 'e1', time: '03:12', label: '首杀 · Uzi', side: 'home', value: 0 },
+        { key: 'e2', time: '07:48', label: '第一条元素龙 · NAV', side: 'away', value: 0 },
+        { key: 'e3', time: '12:05', label: '一血塔 · RMA', side: 'home', value: 0 },
+        { key: 'e4', time: '18:33', label: '团战 4 换 1 · RMA', side: 'home', value: 0 },
+        { key: 'e5', time: '23:59', label: '大龙被 NAV 抢下', side: 'away', value: 0 },
+      ],
+    },
+  ],
+
   preview: false,
   layoutName: layout.name,
   layoutPreset: preset,
@@ -174,6 +260,7 @@ const CYCLE = 44;
 
 const script = [
   [0, () => { state.sides.forEach(s => { s.score = 0; }); }],
+  [1, () => patch({ scene: 'compact' })],
   [2, () => lowerThird('home')],
   [6, () => lowerThird('away')],
   [10, () => score('home', 1)],
@@ -279,7 +366,12 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/presets') {
     // Same shape the mod serves, labels included, so the editor looks identical
     // here and in game.
-    json(res, 200, JSON.stringify({ presets: PRESETS, labels: PRESET_LABELS, current: preset }));
+    // Each package's palette, read WITHOUT applying it. GET /api/layout?preset=
+    // switches the live package, so using it to paint a swatch would walk the
+    // broadcast through every preset in the list.
+    const themes = {};
+    for (const name of PRESETS) themes[name] = readPreset(name).theme;
+    json(res, 200, JSON.stringify({ presets: PRESETS, labels: PRESET_LABELS, themes, current: preset }));
     return;
   }
 

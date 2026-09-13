@@ -3,57 +3,68 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SteveHUD 版面编辑器</title>
+<title>SteveHUD 转播包装 · 导播台</title>
 <link rel="stylesheet" href="../shared/stevehud.css">
 </head>
-<body class="editor-page">
+<body class="editor-page" id="shell">
 
 <!--
-  SteveHUD layout editor.
+  SteveHUD 导播台（版面编辑器）
 
-  Opened by /shude in game, or by hand at http://127.0.0.1:8787/editor/.
+  游戏里 /shude 打开，或者直接开 http://127.0.0.1:8787/editor/。
 
-  It edits the layout document — which graphics exist, where they sit, what
-  colour they are, how they arrive. It does not edit the match: scores, rosters
-  and the clock belong to the server, and an operator changes those with the
-  plugin's /stevehud command or from whatever scoring system is driving it.
+  它编辑的是版面文档 —— 有哪些图形、放在哪、什么颜色、怎么进场。它不编辑比赛：
+  比分、名单、计时属于服务端，导播用插件的 /stevehud 命令或者由记分系统推。
 
-  The canvas is not a mock. It is the real overlay, in an iframe at exactly
-  1920x1080, with a drag layer on top. Two consequences worth stating:
+  ---------------------------------------------------------------------------
+  三个刻意的设计决定
+  ---------------------------------------------------------------------------
 
-    * the handles read their geometry out of the iframe's own DOM, so they agree
-      with what is rendered without either side reimplementing the other's
-      anchor arithmetic;
-    * editing posts the document into the iframe, so what is being adjusted is
-      the thing that will go on air, not a preview of it.
+  1. 画布不是示意图，是嵌在 iframe 里的真实包装页，尺寸正好 1920x1080。
+     两个后果值得写下来：
 
-  The editor's own accent is taken from the loaded package, so the tool is
-  tinted by the thing it is editing. See section 7 of the stylesheet for that
-  and for the other two deliberate departures from the design system it follows.
+       * 选择框是从 iframe 自己的 DOM 里量出来的，所以它和画面上看到的东西
+         不可能对不上 —— 两边不需要各自实现一遍锚点算法；
+       * 编辑时把文档 postMessage 进 iframe，所以正在调的就是将要上播的那个
+         东西，而不是它的预览。
+
+  2. 页面布局本身是可改的。左右两栏可以拖宽窄、可以折叠，状态存在 localStorage。
+     导播台经常同时开在 1080p 和 4K 屏幕上，一个固定宽度不可能两边都合适。
+
+  3. 遮挡预算是一个数字，不是一个感觉。画布右下角实时算出上播元素盖住了多少
+     画面、尤其是盖住了多少"画面窗口"（中央 60% x 68%）。同一套规则由
+     tools/overlay-audit.mjs 在打包检查里跑，所以"不遮挡观看"是能被证伪的，
+     而不是一句设计口号。
 -->
 
-<header class="ed-header">
+<header class="ed-head">
   <div class="ed-brand">
     <span class="ed-brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"
            stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 6h16M4 12h10M4 18h6"/>
-        <circle cx="18" cy="17" r="3.4"/>
+        <rect x="3" y="4" width="18" height="13" rx="2"/>
+        <path d="M8 20.5h8M12 17v3.5"/>
+        <path d="M7.5 8.5h4M7.5 11.5h2.5"/>
+        <circle cx="16.5" cy="11.5" r="2.2"/>
       </svg>
     </span>
     <span class="ed-brand-text">
       <span class="ed-brand-name">SteveHUD</span>
-      <span class="ed-brand-sub">版面编辑器</span>
+      <span class="ed-brand-sub">导播台</span>
     </span>
   </div>
 
-  <span class="ed-status" id="pageStatus"><i></i><span id="pageStatusText">正在连接</span></span>
-  <span class="ed-status" id="dataStatus"><i></i><span id="dataStatusText">等待数据</span></span>
-  <span class="ed-status" id="saveStatus"><i></i><span id="saveStatusText">已同步</span></span>
+  <span class="ed-chip" id="chipLink"><i></i><span>正在连接</span></span>
+  <span class="ed-chip" id="chipData"><i></i><span>等待数据</span></span>
+  <span class="ed-chip" id="chipScope"><i></i><span>本机版面</span></span>
 
-  <span class="ed-spacer"></span>
+  <span class="ed-head-spacer"></span>
 
-  <a class="ed-link" href="../overlay/" target="_blank" rel="noopener">
+  <button class="btn btn-icon" id="btnConsole" type="button" title="控制台" aria-label="控制台">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
+  </button>
+  <a class="btn" href="../overlay/" target="_blank" rel="noopener">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>
@@ -62,1434 +73,1904 @@
   </a>
 </header>
 
-<main class="ed-main">
+<!-- =========================== 左栏：预设 / 图层 / 数据 ==================== -->
+<aside class="ed-rail ed-rail-left" id="railLeft">
+  <button class="ed-grip ed-grip-left" id="gripLeft" type="button" aria-label="调整左栏宽度"></button>
 
-  <!-- ===================== left: package, layers, preview ================= -->
-  <div class="ed-pane">
-
-    <section class="ed-card">
-      <div class="ed-card-head"><h2>版面包预设</h2></div>
-      <div class="ed-card-body">
-        <div class="ed-segmented" id="presetRow" role="group" aria-label="版面包预设"></div>
-        <p class="ed-hint">
-          切换预设会替换整个版面，<b>未保存的改动会丢失</b>；随后立即存盘并广播给所有客户端与包装页。
-        </p>
-      </div>
-    </section>
-
-    <section class="ed-card">
-      <div class="ed-card-head">
-        <h2>图层</h2>
-        <select id="addType" class="ed-add-type" aria-label="要添加的元素类型"></select>
-        <button class="btn btn-icon" id="btnAddText" type="button" title="添加这个类型的元素" aria-label="添加元素">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-        <button class="btn btn-icon btn-danger" id="btnDelete" type="button"
-                title="删除选中元素（Delete）" aria-label="删除选中元素">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"/>
-          </svg>
-        </button>
-      </div>
-      <div class="ed-card-body is-flush">
-        <ul class="ed-layers" id="layerList"></ul>
-      </div>
-      <div class="ed-card-body">
-        <p class="ed-hint">列表顺序即绘制顺序：<b>靠前 = 在后面</b>。视口级元素（跑马灯、安全框）习惯放最前。</p>
-      </div>
-    </section>
-
-    <section class="ed-card">
-      <div class="ed-card-head"><h2>本地预览数据</h2></div>
-      <div class="ed-card-body">
-        <div class="ed-row">
-          <button class="btn" id="btnHome" type="button">主队 +1</button>
-          <button class="btn" id="btnAway" type="button">客队 +1</button>
-        </div>
-        <div class="ed-row">
-          <button class="btn" id="btnAnnounce" type="button">公告</button>
-          <button class="btn" id="btnLower" type="button">选手条</button>
-        </div>
-        <div class="ed-row">
-          <button class="btn" id="btnTicker" type="button">跑马灯</button>
-          <button class="btn" id="btnClock" type="button">计时</button>
-        </div>
-        <div class="ed-segmented" id="sceneRow" role="group" aria-label="场景">
-          <button class="btn" type="button" data-scene="full">完整</button>
-          <button class="btn" type="button" data-scene="compact">紧凑</button>
-          <button class="btn" type="button" data-scene="minimal">极简</button>
-        </div>
-        <button class="btn" id="btnClearPreview" type="button">清除预览数据</button>
-        <p class="ed-hint">
-          只在本机造一份假数据，用来在没有比赛的时候排版面：长队名、三位数比分、停住的计时器。
-          <b>不影响别人，也不发给服务端。</b>
-        </p>
-      </div>
-    </section>
-
+  <div class="ed-rail-mini">
+    <button class="ed-rail-mini-btn" data-expand="left" type="button" aria-label="展开左栏">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    <span class="ed-rail-mini-label">版面</span>
   </div>
 
-  <!-- ========================== center: canvas =========================== -->
-  <div class="ed-center">
+  <div class="ed-tabs" role="tablist" aria-label="左栏">
+    <button class="ed-tab" role="tab" aria-selected="true" data-tab="preset" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      预设
+    </button>
+    <button class="ed-tab" role="tab" aria-selected="false" data-tab="layers" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 5-8 5-8-5 8-5z"/><path d="M4 13l8 5 8-5"/></svg>
+      图层
+    </button>
+    <button class="ed-tab" role="tab" aria-selected="false" data-tab="data" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>
+      数据
+    </button>
+  </div>
 
-    <div class="ed-toolbar">
-      <button class="btn btn-primary" id="btnSave" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
-          <path d="M8 3v6h7V3M8 21v-6h8v6"/>
-        </svg>
-        <span id="btnSaveLabel">保存并广播</span>
-      </button>
-      <button class="btn" id="btnRevert" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>
-        </svg>
-        放弃改动
-      </button>
+  <div class="ed-tabpanel is-active" id="panelPreset" role="tabpanel"></div>
+  <div class="ed-tabpanel" id="panelLayers" role="tabpanel"></div>
+  <div class="ed-tabpanel" id="panelData" role="tabpanel"></div>
+</aside>
 
-      <span class="ed-toolbar-sep" aria-hidden="true"></span>
+<!-- ================================ 画布 ================================== -->
+<main class="ed-center">
+  <div class="ed-toolbar">
+    <button class="btn btn-primary" id="btnSave" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+        <path d="M8 3v6h7V3M8 21v-6h8v6"/>
+      </svg>
+      <span id="saveLabel">保存并广播</span>
+    </button>
+    <button class="btn" id="btnRevert" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>
+      </svg>
+      放弃改动
+    </button>
 
-      <button class="btn btn-icon" id="btnFit" type="button" title="适应窗口" aria-label="适应窗口">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>
-        </svg>
-      </button>
-      <button class="btn btn-icon" id="btnExport" type="button" title="导出 JSON" aria-label="导出 JSON">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
-        </svg>
-      </button>
-      <button class="btn btn-icon" id="btnImport" type="button" title="导入 JSON" aria-label="导入 JSON">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>
-        </svg>
-      </button>
-      <input type="file" id="importFile" accept="application/json,.json" hidden>
+    <span class="ed-toolbar-sep" aria-hidden="true"></span>
 
-      <span class="ed-toolbar-sep" aria-hidden="true"></span>
-      <span class="ed-status" id="zoomStatus"><i></i><span id="zoomStatusText">100%</span></span>
-      <span class="ed-spacer"></span>
-      <span class="ed-status" id="scopeStatus"><i></i><span id="scopeStatusText">本机版面</span></span>
-      <span class="ed-status" id="layoutStatus"><i></i><span id="layoutStatusText">—</span></span>
+    <button class="btn btn-icon" id="btnFit" type="button" title="适应窗口" aria-label="适应窗口">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>
+      </svg>
+    </button>
+    <button class="btn btn-icon" id="btnExport" type="button" title="导出 JSON" aria-label="导出 JSON">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
+      </svg>
+    </button>
+    <button class="btn btn-icon" id="btnImport" type="button" title="导入 JSON" aria-label="导入 JSON">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>
+      </svg>
+    </button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+
+    <span class="ed-toolbar-sep" aria-hidden="true"></span>
+    <button class="btn btn-icon" id="btnZoomOut" type="button" title="缩小" aria-label="缩小">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
+    </button>
+    <span class="ed-chip" id="chipZoom"><i></i><span>100%</span></span>
+    <button class="btn btn-icon" id="btnZoomIn" type="button" title="放大" aria-label="放大">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+
+    <span class="ed-toolbar-spacer"></span>
+    <span class="ed-chip" id="chipLayout"><i></i><span>—</span></span>
+  </div>
+
+  <!-- 本机版面被全服版面压住时，做的一切都不会出现在画面上。不告诉导播，
+      他会一直拖一个其实正常工作的东西，然后得出"工具坏了"的结论。 -->
+  <p class="ed-note is-hidden" id="scopeNote"></p>
+
+  <div class="ed-stage" id="stage">
+    <div class="ed-canvas" id="canvas">
+      <div class="ed-scaler" id="scaler">
+        <iframe id="overlayFrame" src="../overlay/" title="包装页预览"></iframe>
+      </div>
+      <div class="ed-overlay">
+        <div class="ed-guide ed-guide-grid" id="guideGrid"></div>
+        <div class="ed-guide ed-guide-third" id="guideThird"></div>
+        <div class="ed-guide ed-guide-window" id="guideWindow"></div>
+        <div class="ed-guide ed-guide-safe" id="guideSafe"></div>
+      </div>
+      <div class="ed-handles" id="handles"></div>
     </div>
 
-    <!-- Only on screen when it matters. A server-wide package wins over the local
-         one, so while it is set nothing done here appears on air; an operator who
-         is not told that will keep dragging an element and conclude the editor is
-         broken. -->
-    <p class="ed-note is-hidden" id="scopeNote"></p>
-
-    <div class="ed-canvas-wrap" id="canvasWrap">
-      <div class="ed-canvas" id="canvas">
-        <div class="ed-scaler" id="scaler">
-          <iframe id="overlayFrame" src="../overlay/" title="包装页预览"></iframe>
-        </div>
-        <div class="ed-handles" id="handles"></div>
-      </div>
+    <div class="ed-stage-bar">
+      <button class="ed-toggle" data-guide="grid" type="button" aria-pressed="false">栅格</button>
+      <button class="ed-toggle" data-guide="third" type="button" aria-pressed="false">三分线</button>
+      <button class="ed-toggle" data-guide="window" type="button" aria-pressed="true">画面窗口</button>
+      <button class="ed-toggle" data-guide="safe" type="button" aria-pressed="false">安全区</button>
+      <button class="ed-toggle" data-guide="labels" type="button" aria-pressed="true">标签</button>
     </div>
 
-    <p class="ed-hint">
-      拖动元素改位置，拖右下角改尺寸，方向键微调（按住 Shift 每次 10 像素），Delete 删除，Esc 取消选择。
-    </p>
-
+    <div class="ed-budget" id="budget" title="上播元素盖住了多少画面">
+      <span>画面窗口</span>
+      <span class="ed-budget-bar"><span class="ed-budget-fill" id="budgetFill"></span></span>
+      <span class="ed-budget-value" id="budgetValue">0.0%</span>
+    </div>
   </div>
-
-  <!-- ========================= right: inspector ========================== -->
-  <div class="ed-pane">
-
-    <section class="ed-card">
-      <div class="ed-card-head"><h2>元素属性</h2></div>
-      <div class="ed-card-body" id="inspector"></div>
-    </section>
-
-    <section class="ed-card">
-      <div class="ed-card-head"><h2>全局配色</h2></div>
-      <div class="ed-card-body" id="theme"></div>
-    </section>
-
-    <section class="ed-card">
-      <div class="ed-card-head">
-        <h2>版面 JSON</h2>
-        <button class="btn btn-icon" id="btnFormat" type="button" title="格式化" aria-label="格式化 JSON">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
-               stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
-        </button>
-        <button class="btn" id="btnApplyJson" type="button">应用</button>
-      </div>
-      <div class="ed-card-body">
-        <textarea class="ed-json" id="json" spellcheck="false" autocomplete="off"
-                  aria-label="版面 JSON"></textarea>
-      </div>
-    </section>
-
-    <section class="ed-card">
-      <div class="ed-card-head"><h2>消息</h2></div>
-      <ul class="ed-log" id="log"></ul>
-    </section>
-
-  </div>
-
 </main>
 
+<!-- =========================== 右栏：属性 / 主题 / JSON ==================== -->
+<aside class="ed-rail ed-rail-right" id="railRight">
+  <button class="ed-grip ed-grip-right" id="gripRight" type="button" aria-label="调整右栏宽度"></button>
+
+  <div class="ed-rail-mini">
+    <button class="ed-rail-mini-btn" data-expand="right" type="button" aria-label="展开右栏">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <span class="ed-rail-mini-label">属性</span>
+  </div>
+
+  <div class="ed-tabs" role="tablist" aria-label="右栏">
+    <button class="ed-tab" role="tab" aria-selected="true" data-tab="inspector" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+      属性
+    </button>
+    <button class="ed-tab" role="tab" aria-selected="false" data-tab="theme" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="9" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/><circle cx="12" cy="15" r="1.2"/></svg>
+      主题
+    </button>
+    <button class="ed-tab" role="tab" aria-selected="false" data-tab="json" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M9 5c-2 0-2 3-2 3s0 3-2 4c2 1 2 4 2 4s0 3 2 3M15 5c2 0 2 3 2 3s0 3 2 4c-2 1-2 4-2 4s0 3-2 3"/></svg>
+      JSON
+    </button>
+  </div>
+
+  <div class="ed-tabpanel is-active" id="panelInspector" role="tabpanel"></div>
+  <div class="ed-tabpanel" id="panelTheme" role="tabpanel"></div>
+  <div class="ed-tabpanel" id="panelJson" role="tabpanel">
+    <div class="ed-sec">
+      <div class="ed-sec-head">
+        <h2 class="ed-sec-title">版面文档</h2>
+        <button class="btn btn-sm" id="btnFormat" type="button">格式化</button>
+        <button class="btn btn-sm btn-primary" id="btnApplyJson" type="button">应用</button>
+      </div>
+      <textarea class="ed-textarea" id="json" spellcheck="false" autocomplete="off"
+                aria-label="版面 JSON" style="min-height:60vh"></textarea>
+    </div>
+  </div>
+</aside>
+
+<!-- =============================== 控制台 ================================= -->
+<section class="ed-console" id="console" aria-label="控制台">
+  <div class="ed-console-head">
+    <span class="ed-console-title">控制台</span>
+    <span class="ed-chip" id="chipAudit"><i></i><span>审计 —</span></span>
+    <span class="ed-head-spacer"></span>
+    <button class="btn btn-sm" id="btnClearLog" type="button">清空</button>
+    <button class="btn btn-sm btn-icon" id="btnCloseConsole" type="button" aria-label="关闭控制台">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="ed-console-body" id="log"></div>
+</section>
+
 <script>
-/* SteveHUD layout editor.
+/* SteveHUD 导播台。
  *
- * The document is the single source of truth and lives here while editing. Every
- * change goes three places:
+ * 文档是唯一真相，编辑期间住在这里。每一次改动去三个地方：
  *
- *   this.layout       the editor's copy, and the JSON pane
- *   the iframe        by postMessage, so the preview moves immediately
- *   the handles       re-read from the iframe's DOM, so they cannot disagree
+ *   this.doc        导播台手里的那一份，也是 JSON 面板显示的那一份
+ *   iframe          通过 postMessage，所以预览立刻跟着动
+ *   handles         从 iframe 自己的 DOM 重新量，所以两者不可能对不上
  *
- * and on save, a fourth: POST /api/layout, which stores it, broadcasts it to
- * every other page and client, and feeds the in-game HUD.
+ * 保存时去第四个地方：POST /api/layout，它存盘、广播给每一个其他页面和客户端，
+ * 并且喂给游戏内 HUD。
  *
- * Two rules matter more than the rest:
+ * 两条规矩比别的都重要：
  *
- *   * an incoming layout over the stream never overwrites unsaved edits. Another
- *     operator saving must not silently discard half an hour of dragging; the
- *     conflict is reported and left for a person to resolve.
- *   * every failure is visible. A rejected save, a dropped stream, a malformed
- *     document — all of them print somewhere on this page, because the
- *     alternative is an operator finding out from the broadcast.
+ *   * 从流里进来的版面绝不覆盖未保存的改动。另一个导播保存一次，不该悄悄丢掉
+ *     半小时的拖拽；冲突要报出来，留给人来定。
+ *   * 每一个失败都要看得见。保存被拒、流断掉、文档畸形 —— 全部打印在这个页面上
+ *     的某个地方，因为另一种可能是导播从直播里发现。
  */
 (function () {
   "use strict";
 
-  var PRESET_FALLBACK = { presets: ["esports", "olympic", "minimal"], labels: {}, current: "esports" };
-  var SCENES = ["full", "compact", "minimal"];
-  var SCENE_LABELS = { full: "完整", compact: "紧凑", minimal: "极简" };
-  var ANCHORS = [
-    ["topLeft", "左上"],
-    ["topRight", "右上"],
-    ["bottomLeft", "左下"],
-    ["bottomRight", "右下"],
-    ["center", "居中"]
-  ];
+  // ==========================================================================
+  // 0. 常量 —— 元素目录
+  // ==========================================================================
+
+  /* 每个类型的：中文名、家族（调色板分组）、图标、默认锚点/尺寸、以及它认识
+     哪些 options。
+
+     options 是这套东西"能自定义"的地方：每一种数据看板读一组具名参数，而每个
+     参数在这里都有中文标签和合适的控件。渲染器不认识的多余键不会被丢掉，会落到
+     「其它参数」里继续原样保留 —— 所以先加一个键、后补渲染，是可行的顺序。 */
+  var ICONS = {
+    bug: '<path d="M4 6h9v5H4z"/><path d="M15 6h5v5h-5z"/><path d="M4 14h16v4H4z"/>',
+    event: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h6M7 13h4"/>',
+    clock: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/>',
+    lower: '<rect x="3" y="13" width="18" height="6" rx="1.5"/><path d="M6 16h5"/>',
+    ticker: '<rect x="2" y="9" width="20" height="6" rx="2"/><path d="M6 12h4M13 12h5"/>',
+    announce: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10M7 14h6"/>',
+    frame: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+    text: '<path d="M5 7h14M12 7v10M9 17h6"/>',
+    compare: '<path d="M12 4v16"/><path d="M9 8H4v8h5zM15 8h5v8h-5z"/>',
+    table: '<path d="M4 5h16v14H4z"/><path d="M4 10h16M10 5v14"/>',
+    chart: '<path d="M4 19V5"/><path d="M4 19h16"/><path d="M7 15l4-5 3 3 4-6"/>',
+    tiles: '<rect x="3" y="4" width="8" height="7" rx="1"/><rect x="13" y="4" width="8" height="7" rx="1"/><rect x="3" y="13" width="8" height="7" rx="1"/><rect x="13" y="13" width="8" height="7" rx="1"/>',
+    roster: '<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M3 19c0-2.5 2.2-4 5-4s5 1.5 5 4M13 19c0-2.5 2.2-4 5-4s3 1 3 4"/>',
+    series: '<path d="M4 6h16v4H4zM4 14h16v4H4z"/><path d="M8 6v4M16 14v4"/>',
+    timeline: '<path d="M6 4v16"/><circle cx="6" cy="8" r="2"/><circle cx="6" cy="16" r="2"/><path d="M10 8h9M10 16h7"/>',
+    h2h: '<path d="M4 6h6l2 6-2 6H4M20 6h-6l-2 6 2 6h6"/>'
+  };
+
+  function icon(name) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[name] || ICONS.text) + '</svg>';
+  }
+
+  /* 元素目录。family 决定调色板分组，也决定默认放在哪条边上 —— 这样拖进来的
+     东西一开始就在一个合理的位置，而不是叠在画面正中。 */
   var TYPES = [
-    ["matchBug", "比赛角标"],
-    ["eventInfo", "赛事信息"],
-    ["timer", "计时器"],
-    ["lowerThird", "选手条"],
-    ["ticker", "跑马灯"],
-    ["announcement", "公告"],
-    ["frame", "安全框"],
-    ["text", "文本"]
+    { type: "matchBug", name: "比分角标", family: "常驻信息", icon: "bug",
+      w: 348, h: 0, anchor: "topLeft", x: 40, y: 45,
+      desc: "LIVE 徽标 + 逐行比分，比赛期间常驻左上角。",
+      options: [
+        { key: "clock", label: "右上角时钟", type: "select", values: [["wall", "挂钟"], ["match", "比赛计时"], ["none", "不显示"]] },
+        { key: "showLive", label: "显示 LIVE", type: "bool" },
+        { key: "liveText", label: "徽标文字", type: "text", placeholder: "LIVE" },
+        { key: "title", label: "中间标题", type: "text", placeholder: "留空则用赛事阶段" }
+      ] },
+
+    { type: "eventInfo", name: "赛事信息", family: "常驻信息", icon: "event",
+      w: 432, h: 0, anchor: "topRight", x: 40, y: 45,
+      desc: "右上角的赛事名与阶段。",
+      options: [
+        { key: "title", label: "赛事名", type: "text", placeholder: "留空则用数据" },
+        { key: "subtitle", label: "阶段", type: "text", placeholder: "留空则用数据" }
+      ] },
+
+    { type: "timer", name: "计时器", family: "常驻信息", icon: "clock",
+      w: 264, h: 0, anchor: "bottomRight", x: 40, y: 0,
+      desc: "最大字号的计时，比赛/局间共用。",
+      options: [
+        { key: "title", label: "时间文本", type: "text", placeholder: "留空则用数据" },
+        { key: "subtitle", label: "标签", type: "text", placeholder: "比赛计时" },
+        { key: "showDot", label: "显示运行点", type: "bool" }
+      ] },
+
+    { type: "lowerThird", name: "选手条", family: "常驻信息", icon: "lower",
+      w: 768, h: 0, anchor: "bottomLeft", x: 40, y: 0,
+      desc: "从左滑入的介绍条，队伍色块 + 队名 + 选手。",
+      options: [
+        { key: "mode", label: "主标题", type: "select", values: [["team", "队名"], ["player", "选手名"]] },
+        { key: "side", label: "固定队伍 id", type: "text", placeholder: "留空则跟随数据" }
+      ] },
+
+    { type: "ticker", name: "信息条", family: "常驻信息", icon: "ticker",
+      w: 1920, h: 54, anchor: "bottomLeft", x: 0, y: 0,
+      desc: "贴底滚动条。底部锚定的元素会自动让开它。",
+      options: [
+        { key: "mode", label: "滚动方式", type: "select", values: [["scroll", "滚动"], ["static", "静止"]] },
+        { key: "flag", label: "旗帜文字", type: "text", placeholder: "LIVE" },
+        { key: "showFlag", label: "显示旗帜", type: "bool" },
+        { key: "speed", label: "滚动速度", type: "number", min: 0, max: 200, step: 2, placeholder: "自动" },
+        { key: "title", label: "固定首条", type: "text", placeholder: "插在最前面的一条" }
+      ] },
+
+    { type: "announcement", name: "公告", family: "常驻信息", icon: "announce",
+      w: 0, h: 0, anchor: "center", x: 0, y: -168,
+      desc: "居中大字卡，回合切换和赛点用。",
+      options: [
+        { key: "title", label: "标题", type: "text", placeholder: "留空则用数据" },
+        { key: "subtitle", label: "副标", type: "text", placeholder: "留空则用数据" },
+        { key: "rules", label: "两侧装饰线", type: "bool" },
+        { key: "force", label: "始终显示", type: "bool" }
+      ] },
+
+    { type: "frame", name: "安全框", family: "常驻信息", icon: "frame",
+      w: 0, h: 0, anchor: "topLeft", x: 0, y: 0,
+      desc: "四角括号，框住安全区。不承载数据，宽高无效。",
+      options: [
+        { key: "arms", label: "四角括号", type: "bool" },
+        { key: "bar", label: "完整细框", type: "bool" },
+        { key: "inset", label: "额外内缩", type: "number", min: 0, max: 200, step: 2 },
+        { key: "arm", label: "括号臂长", type: "number", min: 20, max: 200, step: 4 }
+      ] },
+
+    { type: "text", name: "自由文本", family: "常驻信息", icon: "text",
+      w: 0, h: 0, anchor: "topLeft", x: 40, y: 200,
+      desc: "一行字，直接写或者从比赛数据里取。",
+      options: [
+        { key: "variant", label: "字号层级", type: "select", values: [["", "正文"], ["title", "标题"], ["lead", "小标题"], ["micro", "微标签"]] }
+      ] },
+
+    { type: "statCompare", name: "数据对比", family: "数据看板", icon: "compare",
+      w: 470, h: 0, anchor: "bottomLeft", x: 40, y: 0,
+      desc: "一条指标一行，从中轴往两边长的双向条。抓对抗关系最省横向空间。",
+      options: [
+        { key: "board", label: "数据源", type: "text", placeholder: "看板 key，如 compare" },
+        { key: "maxRows", label: "最多几行", type: "number", min: 0, max: 12, step: 1, placeholder: "全部" },
+        { key: "max", label: "条形满格值", type: "number", min: 0, step: 1, placeholder: "自动取最大" },
+        { key: "showLabel", label: "显示指标名", type: "bool" }
+      ] },
+
+    { type: "leaderBoard", name: "排行榜", family: "数据看板", icon: "table",
+      w: 360, h: 0, anchor: "bottomRight", x: 40, y: 104,
+      desc: "名次 / 名称 / 数值三列的榜单，榜首自动点亮。",
+      options: [
+        { key: "board", label: "数据源", type: "text", placeholder: "看板 key，如 kills" },
+        { key: "maxRows", label: "最多几行", type: "number", min: 0, max: 16, step: 1, placeholder: "全部" },
+        { key: "sort", label: "排序", type: "select", values: [["desc", "从大到小"], ["asc", "从小到大"], ["none", "保持原序"]] },
+        { key: "showRank", label: "显示名次", type: "bool" },
+        { key: "highlight", label: "高亮前几名", type: "number", min: 0, max: 16, step: 1 },
+        { key: "nameLabel", label: "名称列表头", type: "text", placeholder: "选手" },
+        { key: "valueLabel", label: "数值列表头", type: "text", placeholder: "数值" }
+      ] },
+
+    { type: "seriesChart", name: "趋势曲线", family: "数据看板", icon: "chart",
+      w: 430, h: 0, anchor: "topLeft", x: 40, y: 230,
+      desc: "两队各一条曲线。读 sides[].series，或一块按 side 分组的看板。",
+      options: [
+        { key: "board", label: "数据源", type: "text", placeholder: "留空则读 sides[].series" },
+        { key: "window", label: "只看最近 N 点", type: "number", min: 0, max: 500, step: 1, placeholder: "全部" },
+        { key: "area", label: "填充面积", type: "bool" },
+        { key: "min", label: "纵轴下限", type: "number", placeholder: "自动" },
+        { key: "max", label: "纵轴上限", type: "number", placeholder: "自动" },
+        { key: "height", label: "绘图高度", type: "number", min: 40, max: 400, step: 4, placeholder: "96" },
+        { key: "axis", label: "横轴两端", type: "text", placeholder: "开局|现在" }
+      ] },
+
+    { type: "kpiTiles", name: "关键指标", family: "数据看板", icon: "tiles",
+      w: 660, h: 0, anchor: "center", x: 0, y: 196,
+      desc: "一格一个数值的磁贴墙，适合总击杀、平均经济这类总量。",
+      options: [
+        { key: "board", label: "数据源", type: "text", placeholder: "看板 key，如 totals" },
+        { key: "cols", label: "列数", type: "number", min: 1, max: 6, step: 1 },
+        { key: "maxRows", label: "最多几格", type: "number", min: 0, max: 24, step: 1, placeholder: "全部" },
+        { key: "title", label: "标题", type: "text", placeholder: "留空则用数据" }
+      ] },
+
+    { type: "rosterCard", name: "阵容卡", family: "数据看板", icon: "roster",
+      w: 520, h: 0, anchor: "topRight", x: 40, y: 135,
+      desc: "一支队伍的选手网格，适合赛前和局间。",
+      options: [
+        { key: "side", label: "队伍 id", type: "text", placeholder: "留空则用第一支" },
+        { key: "cols", label: "列数", type: "number", min: 1, max: 8, step: 1 },
+        { key: "maxRows", label: "最多几人", type: "number", min: 0, max: 12, step: 1, placeholder: "全部" },
+        { key: "title", label: "队标", type: "text", placeholder: "留空则用缩写" },
+        { key: "subtitle", label: "队名", type: "text", placeholder: "留空则用全名" }
+      ] },
+
+    { type: "seriesScore", name: "局分板", family: "数据看板", icon: "series",
+      w: 360, h: 0, anchor: "topRight", x: 40, y: 135,
+      desc: "BO 系列的逐局结果，下面是总比分。",
+      options: [
+        { key: "board", label: "数据源", type: "text", placeholder: "看板 key，如 series" },
+        { key: "maxRows", label: "最多几局", type: "number", min: 0, max: 9, step: 1, placeholder: "全部" },
+        { key: "title", label: "标题", type: "text", placeholder: "赛程" }
+      ] },
+
+    { type: "timeline", name: "事件时间轴", family: "数据看板", icon: "timeline",
+      w: 380, h: 0, anchor: "topRight", x: 40, y: 135,
+      desc: "时间 + 事件，一血、团战、大龙都走这里。",
+      options: [
+        { key: "board", label: "数据源", type: "text", placeholder: "看板 key，如 timeline" },
+        { key: "maxRows", label: "最多几条", type: "number", min: 0, max: 16, step: 1, placeholder: "全部" },
+        { key: "order", label: "顺序", type: "select", values: [["desc", "新的在上"], ["asc", "旧的在上"]] },
+        { key: "title", label: "标题", type: "text", placeholder: "关键时刻" }
+      ] },
+
+    { type: "headToHead", name: "对阵卡", family: "数据看板", icon: "h2h",
+      w: 660, h: 0, anchor: "center", x: 0, y: -110,
+      desc: "两侧对阵 + 中间 VS，赛前和中场用。",
+      options: [
+        { key: "vs", label: "中间文字", type: "text", placeholder: "VS" },
+        { key: "subtitle", label: "中间副标", type: "text", placeholder: "留空则用赛事阶段" }
+      ] }
   ];
-  var ENTERS = ["none", "fade", "slideDown", "slideUp", "slideLeft", "slideRight", "scaleIn", "popIn"];
-  var UPDATES = ["none", "pop", "flash"];
-  var EASINGS = ["linear", "outCubic", "outQuint", "outBack", "inOutSine"];
+
+  var TYPE_BY_KEY = {};
+  TYPES.forEach(function (t) { TYPE_BY_KEY[t.type] = t; });
+
+  var FAMILIES = ["常驻信息", "数据看板"];
+
+  var ANCHORS = [
+    ["topLeft", "左上"], ["topRight", "右上"],
+    ["bottomLeft", "左下"], ["bottomRight", "右下"], ["center", "居中"]
+  ];
+  var SCENES = [["full", "全场"], ["compact", "局内"], ["minimal", "极简"]];
+  var ENTERS = [
+    ["none", "无"], ["fade", "淡入"], ["slideDown", "自上滑入"], ["slideUp", "自下滑入"],
+    ["slideLeft", "自左滑入"], ["slideRight", "自右滑入"], ["scaleIn", "缩放进入"], ["popIn", "弹出"]
+  ];
+  var UPDATES = [["none", "无"], ["pop", "弹跳"], ["flash", "闪烁"]];
+  var EASINGS = [
+    ["linear", "线性"], ["outCubic", "缓出"], ["outQuint", "强缓出"],
+    ["outBack", "回弹"], ["inOutSine", "正弦进出"]
+  ];
+
+  /* 主题字段与它们的含义。顺序就是面板上的顺序：先底色，再文字，再强调色。 */
+  var THEME_FIELDS = [
+    { key: "panelTop", label: "面板底色 · 上", kind: "color" },
+    { key: "panelBottom", label: "面板底色 · 下", kind: "color" },
+    { key: "border", label: "面板描边", kind: "color" },
+    { key: "ink", label: "主文字", kind: "color" },
+    { key: "inkDim", label: "次要文字", kind: "color" },
+    { key: "accent", label: "强调色", kind: "color" },
+    { key: "live", label: "直播红", kind: "color" },
+    { key: "home", label: "主队 / 左色", kind: "color" },
+    { key: "away", label: "客队 / 右色", kind: "color" },
+    { key: "font", label: "字体栈", kind: "text", placeholder: "留空则用系统字体" }
+  ];
 
   var RETRY_BASE_MS = 400;
   var RETRY_MAX_MS = 15000;
-  var LOG_LIMIT = 60;
+  var LOG_LIMIT = 200;
 
-  /* Icons, inline. Not an icon font and not emoji: emoji are font-dependent,
-     inconsistent across platforms, and cannot take the accent colour. These are
-     static strings with no data interpolated into them. */
-  var ICONS = {
-    grip: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-          '<circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>' +
-          '<circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>' +
-          '<circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>',
-    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ' +
-         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-         '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/>' +
-         '<circle cx="12" cy="12" r="2.6"/></svg>',
-    eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ' +
-            'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-            '<path d="M4 4l16 16"/>' +
-            '<path d="M9.5 6.2A9.7 9.7 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a17 17 0 0 1-3 3.6"/>' +
-            '<path d="M6.4 8.1A17 17 0 0 0 2 12s3.6 6.5 10 6.5a9.6 9.6 0 0 0 3.4-.6"/>' +
-            '<path d="M10.3 10.4a2.6 2.6 0 0 0 3.4 3.4"/></svg>',
-    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
-    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-          'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
-    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ' +
-          'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-          '<rect x="9" y="9" width="11" height="11" rx="2"/>' +
-          '<path d="M5 15V6a1 1 0 0 1 1-1h9"/></svg>'
-  };
+  // ==========================================================================
+  // 1. 状态
+  // ==========================================================================
 
-  // ---- helpers -----------------------------------------------------------
+  var doc = null;             // 正在编辑的版面文档
+  var savedJson = "";         // 上一次保存/加载时的序列化结果，用来判断"有未存改动"
+  var selectedId = "";
+  var rects = {};             // id -> iframe 里量到的设计像素矩形
+  var presets = { presets: [], labels: {}, current: "" };
+  var liveState = null;
+  var scale = 0.5;
+  var zoomMode = "fit";
+  var logs = [];
+  var scope = { scope: "local", author: "", preset: "" };
+  var dirtyFlag = false;
+  var localEdits = false;     // 是否已经用 postMessage 推过草稿
 
-  function isObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+  var frame = document.getElementById("overlayFrame");
 
-  function toNum(v, fallback) {
-    var n = typeof v === "number" ? v : parseFloat(v);
-    return isFinite(n) ? n : fallback;
-  }
+  function $(id) { return document.getElementById(id); }
 
-  function clamp(v, min, max) { return v < min ? min : (v > max ? max : v); }
-
-  function clone(v) { return JSON.parse(JSON.stringify(v)); }
-
-  function pretty(v) {
-    try {
-      return JSON.stringify(v, null, 2);
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function el(tag, className) {
+  function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
     return node;
   }
 
-  function on(node, event, handler) { if (node) node.addEventListener(event, handler); }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
-  var COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-  function rgbOf(color) {
-    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || ""));
-    if (!m) return null;
-    var h = m[1];
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  function deepCopy(value) { return JSON.parse(JSON.stringify(value)); }
+
+  var esc = function (s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  };
+
+  // ==========================================================================
+  // 2. 日志
+  // ==========================================================================
+
+  function log(message, kind) {
+    var now = new Date();
+    var stamp = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2) +
+      ":" + ("0" + now.getSeconds()).slice(-2);
+    logs.push({ at: stamp, text: String(message), kind: kind || "" });
+    if (logs.length > LOG_LIMIT) logs = logs.slice(logs.length - LOG_LIMIT);
+    renderLog();
   }
 
-  function linear(v) {
-    var s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  function renderLog() {
+    var host = $("log");
+    clear(host);
+    logs.forEach(function (entry) {
+      var line = el("div", "ed-log-line" + (entry.kind ? " is-" + entry.kind : ""));
+      line.appendChild(el("span", "ed-log-time", entry.at));
+      line.appendChild(el("span", "", entry.text));
+      host.appendChild(line);
+    });
+    host.scrollTop = host.scrollHeight;
   }
 
-  /** Black or white ink for a background, by WCAG contrast rather than a
-      brightness threshold — the same rule the package uses, so the editor and
-      the graphics agree about which text colour is legible. */
-  function inkOn(color) {
-    var c = rgbOf(color);
-    if (!c) return "#14100a";
-    var l = 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2]);
-    return l > 0.179 ? "#14100a" : "#ffffff";
-  }
+  // ==========================================================================
+  // 3. 版面草稿 <-> iframe
+  // ==========================================================================
 
-  function rgba(color, alpha) {
-    var c = rgbOf(color);
-    return c ? "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha + ")" : null;
-  }
+  function serialise() { return JSON.stringify(doc, null, 2); }
 
-  // ---- state -------------------------------------------------------------
-
-  var layout = null;        // the document being edited
-  var saved = null;         // the last document known to be stored
-  var selectedId = null;
-  var dirty = false;
-  var saveInFlight = false;
-  var zoom = 1;
-  var fitZoom = true;
-
-  var raw = null;           // last match state received, verbatim
-  var sse = null;
-  var sseOpen = false;
-  var attempt = 0;
-  var retryTimer = 0;
-  var originOk = window.location.protocol !== "file:";
-
-  var presets = PRESET_FALLBACK;
-  var ui = {};
-
-  // ---- log ---------------------------------------------------------------
-
-  function stamp() {
-    var d = new Date();
-    function p(n) { return n < 10 ? "0" + n : String(n); }
-    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
-  }
-
-  function note(text, kind) {
-    if (!ui.log) return;
-    var li = document.createElement("li");
-    if (kind) li.classList.add("is-" + kind);
-    var time = document.createElement("time");
-    time.textContent = stamp();
-    var span = document.createElement("span");
-    span.textContent = text;       // textContent: never markup
-    li.appendChild(time);
-    li.appendChild(span);
-    ui.log.insertBefore(li, ui.log.firstChild);
-    while (ui.log.children.length > LOG_LIMIT) ui.log.removeChild(ui.log.lastChild);
-  }
-
-  // ---- status ------------------------------------------------------------
-
-  function setStatus(node, textNode, state, text) {
-    if (!node) return;
-    if (textNode && textNode.textContent !== text) textNode.textContent = text;
-    node.classList.toggle("is-ok", state === true);
-    node.classList.toggle("is-bad", state === false);
-    node.classList.toggle("is-warn", state === "warn");
-  }
-
-  function updateStatus() {
-    if (!originOk) {
-      setStatus(ui.pageStatus, ui.pageStatusText, false, "请用 http:// 打开");
-    } else if (sseOpen) {
-      setStatus(ui.pageStatus, ui.pageStatusText, true, "已连接 · rev " + revText());
-    } else {
-      setStatus(ui.pageStatus, ui.pageStatusText, false, "重连中 #" + attempt);
+  /* 把草稿推给 iframe。这是"拖着就在动"而不是"松手才动"的原因，也同样让主题
+     色板的每一次改动立刻可见。 */
+  function pushDraft() {
+    if (!frame.contentWindow) return;
+    try {
+      frame.contentWindow.postMessage({ type: "layout", layout: doc }, window.location.origin);
+      localEdits = true;
+    } catch (e) {
+      log("无法把草稿推给预览：" + e.message, "warn");
     }
-
-    if (!raw) {
-      setStatus(ui.dataStatus, ui.dataStatusText, false, "等待数据");
-    } else if (raw.preview) {
-      setStatus(ui.dataStatus, ui.dataStatusText, "warn", "本地预览数据");
-    } else {
-      var link = isObject(raw.link) ? raw.link : {};
-      var connected = link.connected === undefined ? true : link.connected === true;
-      setStatus(ui.dataStatus, ui.dataStatusText, connected,
-        connected ? "赛事数据已连接" : "赛事数据未连接");
-    }
-
-    setStatus(ui.saveStatus, ui.saveStatusText, dirty ? "warn" : true,
-      saveInFlight ? "保存中…" : (dirty ? "有未保存改动" : "已同步"));
-    if (ui.scopeNote) renderScope();
-    if (ui.btnSave) ui.btnSave.disabled = !dirty || saveInFlight;
-    if (ui.btnRevert) ui.btnRevert.disabled = !dirty;
-    if (ui.btnDelete) ui.btnDelete.disabled = !selected();
-  }
-
-  function revText() { return raw ? String(toNum(raw.rev, -1)) : "—"; }
-
-  function setZoomStatus() {
-    setStatus(ui.zoomStatus, ui.zoomStatusText, true, Math.round(zoom * 100) + "%");
-  }
-
-  // ---- the document ------------------------------------------------------
-
-  function adopt(next, source) {
-    if (!isObject(next) || !isObject(next.canvas)) return false;
-    layout = next;
-    if (!Array.isArray(layout.elements)) layout.elements = [];
-    if (!isObject(layout.theme)) layout.theme = {};
-    if (!isObject(layout.safe)) layout.safe = { x: 26, y: 22 };
-    if (!saved) saved = clone(layout);
-    applyEditorTheme(layout.theme);
-    applyToFrame();
-    // Sized before the handles are built: they read their geometry out of the
-    // iframe, and a zero-sized canvas would put every box at the origin.
-    resizeCanvas();
-    renderAll();
-    if (ui.layoutStatusText) {
-      ui.layoutStatusText.textContent = (layout.name || "未命名") + " · " + layout.elements.length + " 个元素";
-    }
-    if (source) note("已载入版面 · " + source);
-    return true;
-  }
-
-  /**
-   * Tints the editor with the package's own accent.
-   *
-   * The design system this page follows suggests a fixed indigo. Following it
-   * here would mean the tool and the thing it makes look like two products, and
-   * would fight the operator: every package they load would sit next to a UI in
-   * a colour the package does not use. So the neutral ramp is the system's and
-   * the accent is the document's.
-   */
-  function applyEditorTheme(theme) {
-    var page = document.body;
-    var accent = COLOR_RE.test(String(theme && theme.accent || "")) ? theme.accent : "#FFC24B";
-    page.style.setProperty("--accent", accent);
-    page.style.setProperty("--on-accent", inkOn(accent));
-    page.style.setProperty("--accent-soft", rgba(accent, 0.14) || "rgba(255,194,75,0.14)");
-    page.style.setProperty("--accent-line", rgba(accent, 0.45) || "rgba(255,194,75,0.45)");
-    page.style.setProperty("--accent-glow", rgba(accent, 0.22) || "rgba(255,194,75,0.22)");
   }
 
   function markDirty() {
-    dirty = true;
-    layout.__rev = (layout.__rev || 0) + 1;
-    applyToFrame();
-    renderLayers();
-    renderJson();
-    updateStatus();
+    dirtyFlag = serialise() !== savedJson;
+    $("saveLabel").textContent = dirtyFlag ? "保存并广播 *" : "保存并广播";
+    renderJsonPane();
+    renderBudget();
   }
 
-  /** Pushes the document into the preview iframe, which is the real overlay. */
-  function applyToFrame() {
-    var frame = ui.frame;
-    if (!frame || !frame.contentWindow || !layout) return;
-    try {
-      frame.contentWindow.postMessage({ type: "stevehud:layout", layout: layout }, "*");
-    } catch (e) {
-      note("无法把版面推送到预览", "bad");
-    }
+  /* iframe 重画是异步的：postMessage 出去以后，DOM 要到下一帧才带上新元素。
+     所以几何要延后一点重量一次，否则"刚加的元素没有选择框、拖不动"—— 这是
+     一个看起来像偶发的 bug，其实是时序。合并到一帧里做，免得拖拽时每像素
+     都重排一次。 */
+  var geometryTimer = 0;
+  function refreshGeometry() {
+    clearTimeout(geometryTimer);
+    geometryTimer = setTimeout(function () {
+      measure();
+      renderHandles();
+      renderBudget();
+    }, 90);
   }
 
-  function selected() {
-    if (!layout || !selectedId) return null;
-    for (var i = 0; i < layout.elements.length; i++) {
-      if (layout.elements[i] && layout.elements[i].id === selectedId) return layout.elements[i];
-    }
-    return null;
+  /** 每次改动都走这里：推草稿、重画属性面板、重算脏标记。 */
+  function changed(options) {
+    var opts = options || {};
+    pushDraft();
+    markDirty();
+    if (opts.layers !== false) renderLayers();
+    if (opts.inspector !== false && !opts.skipInspector) renderInspector();
+    if (opts.theme) renderTheme();
+    if (opts.json) renderJsonPane();
+    refreshGeometry();
   }
 
-  function elementById(id) {
-    if (!layout) return null;
-    for (var i = 0; i < layout.elements.length; i++) {
-      if (layout.elements[i] && layout.elements[i].id === id) return layout.elements[i];
-    }
-    return null;
-  }
+  // ==========================================================================
+  // 4. 几何 —— 从 iframe 自己的 DOM 量
+  // ==========================================================================
 
-  // ---- the iframe's geometry --------------------------------------------
-
-  /* The handles read their boxes out of the overlay's own DOM rather than
-     recomputing the anchor arithmetic here. Two implementations of "where does
-     this element go" would eventually disagree, and the editor would then be
-     lying about the broadcast — the one thing it must never do. */
   function measure() {
-    var frame = ui.frame;
-    if (!frame || !layout) return [];
-    var doc;
-    try {
-      doc = frame.contentDocument;
-    } catch (e) {
-      return [];
-    }
-    if (!doc) return [];
-
-    var out = [];
-    layout.elements.forEach(function (element) {
-      if (!element || !element.id) return;
-      var node = doc.querySelector('.el[data-id="' + cssEscape(element.id) + '"]');
-      if (!node || node.hidden) {
-        out.push({ element: element, rect: null });
-        return;
-      }
+    rects = {};
+    var d = frame.contentDocument;
+    if (!d) return;
+    var nodes = d.querySelectorAll(".el");
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (node.hidden) continue;
       var r = node.getBoundingClientRect();
-      out.push({
-        element: element,
-        rect: { left: r.left, top: r.top, width: r.width, height: r.height }
+      if (r.width < 2 || r.height < 2) continue;
+      // iframe 的视口就是 1920x1080，所以它里面的 CSS 像素就等于设计像素。
+      rects[node.getAttribute("data-id")] = {
+        x: r.left, y: r.top, w: r.width, h: r.height,
+        type: node.getAttribute("data-type")
+      };
+    }
+  }
+
+  /* 遮挡预算。规则和 tools/overlay-audit.mjs 是同一套：画面窗口是画布中央
+     60% x 68%，那是观众真正在看的地方。
+
+     按 16px 步长栅格化求并集：1920x1080 上是 8100 个采样点，够精确了，而且比
+     真的做多边形并集简单得多。 */
+  var WINDOW_RECT = { x: 1920 * 0.20, y: 1080 * 0.16, w: 1920 * 0.60, h: 1080 * 0.68 };
+
+  function coverage() {
+    var step = 16;
+    var ids = Object.keys(rects);
+    var winAll = 0, winHit = 0, all = 0, hit = 0;
+    for (var y = step / 2; y < 1080; y += step) {
+      for (var x = step / 2; x < 1920; x += step) {
+        all++;
+        var inWin = x >= WINDOW_RECT.x && x <= WINDOW_RECT.x + WINDOW_RECT.w &&
+                    y >= WINDOW_RECT.y && y <= WINDOW_RECT.y + WINDOW_RECT.h;
+        if (inWin) winAll++;
+        var covered = false;
+        for (var i = 0; i < ids.length; i++) {
+          var r = rects[ids[i]];
+          if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) { covered = true; break; }
+        }
+        if (covered) { hit++; if (inWin) winHit++; }
+      }
+    }
+    return { window: winAll ? winHit / winAll : 0, canvas: all ? hit / all : 0 };
+  }
+
+  function renderBudget() {
+    // 画布在文档到位之前就要能画（fitCanvas 会调这里），所以先挡一下。
+    if (!doc || !doc.elements) return;
+    measure();
+    var c = coverage();
+
+    var declared = {};
+    var anyDeclared = false;
+    (doc.elements || []).forEach(function (element) {
+      if (element.options && String(element.options.window).toLowerCase() === "allow") {
+        declared[element.id] = true;
+        if (isOnAir(element)) anyDeclared = true;
+      }
+    });
+    var budget = anyDeclared ? 0.70 : 0.03;
+
+    var pct = c.window * 100;
+    $("budgetValue").textContent = pct.toFixed(1) + "%";
+    $("budgetFill").style.width = clamp(c.window / budget, 0, 1) * 100 + "%";
+    var box = $("budget");
+    box.classList.toggle("is-warn", c.window > budget * 0.6 && c.window <= budget);
+    box.classList.toggle("is-bad", c.window > budget);
+    box.title = "画面窗口占用 " + pct.toFixed(2) + "%（上限 " + (budget * 100) + "%）· 整幅占用 " +
+      (c.canvas * 100).toFixed(1) + "%" + (anyDeclared ? " · 本场景含已声明的中场大卡" : "");
+
+    audit(declared, budget, c);
+  }
+
+  /* 和 tools/overlay-audit.mjs 同一套规则，在这里跑一遍。
+
+     为什么要在编辑器里再实现一次：审计脚本是打包检查，跑在提交前；导播在直播中
+     需要的是一边拖一边就知道"我这一下会不会挡住画面"。两条规则必须一模一样，
+     所以这里的常量、画面窗口的定义、以及"文字缩到下限仍溢出"的判定，都是照着
+     那份脚本写的。任何一边改了，另一边要跟着改。 */
+  var WINDOW_BUDGET_ELEMENT = 0.02;
+
+  function audit(declared, budget, coverageNow) {
+    var problems = [];
+
+    if (coverageNow.window > budget) {
+      problems.push("画面窗口被遮挡 " + (coverageNow.window * 100).toFixed(2) +
+        "%，超过预算 " + (budget * 100) + "%");
+    }
+    Object.keys(rects).forEach(function (id) {
+      var r = rects[id];
+      var ox = Math.min(r.x + r.w, WINDOW_RECT.x + WINDOW_RECT.w) - Math.max(r.x, WINDOW_RECT.x);
+      var oy = Math.min(r.y + r.h, WINDOW_RECT.y + WINDOW_RECT.h) - Math.max(r.y, WINDOW_RECT.y);
+      if (ox <= 0 || oy <= 0) return;
+      var share = (ox * oy) / (WINDOW_RECT.w * WINDOW_RECT.h);
+      if (share > WINDOW_BUDGET_ELEMENT && !declared[id]) {
+        problems.push("元素 " + id + " 未声明 window=allow 却遮挡画面窗口 " +
+          (share * 100).toFixed(1) + "%（上限 " + (WINDOW_BUDGET_ELEMENT * 100) + "%）");
+      }
+    });
+
+    // 缩到下限还在溢出，就是真的被切掉了 —— 这正是"英文队名显示不全"那类问题。
+    var d = frame.contentDocument;
+    if (d) {
+      var tight = d.querySelectorAll(".fit.is-tight");
+      for (var i = 0; i < tight.length && problems.length < 9; i++) {
+        var owner = tight[i].closest(".el");
+        problems.push("文字缩到下限仍溢出 [" + (owner ? owner.getAttribute("data-id") : "?") +
+          '] "' + tight[i].textContent + '"');
+      }
+    }
+
+    var chip = $("chipAudit");
+    if (chip) {
+      chip.querySelector("span").textContent = problems.length
+        ? "审计 " + problems.length + " 项" : "审计 通过";
+      chip.classList.toggle("is-bad", problems.length > 0);
+      chip.classList.toggle("is-on", problems.length === 0);
+    }
+
+    // 只在问题集合变化时写日志，否则拖一下能刷满整个控制台。
+    var signature = problems.join("|");
+    if (signature !== lastAuditSignature) {
+      lastAuditSignature = signature;
+      if (problems.length) {
+        problems.slice(0, 5).forEach(function (line) { log("审计：" + line, "warn"); });
+      } else if (lastAuditSignature !== "") {
+        log("审计通过：没有元素压进画面窗口，没有文字被切掉", "ok");
+      }
+    }
+  }
+
+  var lastAuditSignature = null;
+
+  function isOnAir(element) {
+    if (!element || element.visible === false) return false;
+    var scenes = element.scenes;
+    if (!scenes || !scenes.length) return true;
+    var now = liveState && liveState.scene ? liveState.scene : "full";
+    return scenes.indexOf(now) >= 0;
+  }
+
+  // ==========================================================================
+  // 5. 选择框
+  // ==========================================================================
+
+  function renderHandles() {
+    var host = $("handles");
+    clear(host);
+    var element = findElement(selectedId);
+    var rect = rects[selectedId];
+    if (!element || !rect) return;
+
+    var showLabels = guideOn("labels");
+    var box = el("div", "ed-box is-on" + (element.visible === false ? " is-locked" : ""));
+    box.style.left = rect.x * scale + "px";
+    box.style.top = rect.y * scale + "px";
+    box.style.width = rect.w * scale + "px";
+    box.style.height = rect.h * scale + "px";
+    box.setAttribute("data-drag", "move");
+
+    if (showLabels) {
+      var label = el("div", "ed-box-label",
+        (element.label || TYPE_BY_KEY[element.type] && TYPE_BY_KEY[element.type].name || element.type) +
+        "  " + Math.round(rect.x) + "," + Math.round(rect.y) +
+        "  " + Math.round(rect.w) + "x" + Math.round(rect.h));
+      // 贴着画布顶边的元素，标签翻到下面去，否则会被裁掉 —— 这正是"字看不全"
+      // 的老毛病，在选择框上也一样要避免。
+      if (rect.y * scale < 24) label.className += " is-flip";
+      box.appendChild(label);
+    }
+
+    if (element.type !== "frame") {
+      [["se", "resize"], ["sw", "resize"], ["e", "resize"], ["s", "resize"]].forEach(function (spec) {
+        var handle = el("div", "ed-handle ed-handle-" + spec[0]);
+        handle.setAttribute("data-drag", spec[1]);
+        handle.setAttribute("data-corner", spec[0]);
+        box.appendChild(handle);
       });
-    });
-    return out;
+    }
+
+    host.appendChild(box);
   }
 
-  function cssEscape(value) {
-    if (window.CSS && window.CSS.escape) return window.CSS.escape(value);
-    return String(value).replace(/["\\]/g, "\\$&");
+  // ==========================================================================
+  // 6. 拖拽与缩放
+  // ==========================================================================
+
+  var drag = null;
+
+  function stagePoint(ev) {
+    var rect = $("canvas").getBoundingClientRect();
+    return { x: (ev.clientX - rect.left) / scale, y: (ev.clientY - rect.top) / scale };
   }
 
-  // ---- rendering ---------------------------------------------------------
+  function startDrag(ev) {
+    var handle = ev.target.closest("[data-drag]");
+    if (!handle) return;
+    var element = findElement(selectedId);
+    var rect = rects[selectedId];
+    if (!element || !rect) return;
+    ev.preventDefault();
 
-  function renderAll() {
-    renderPresets();
-    renderLayers();
-    renderInspector();
-    renderTheme();
-    renderJson();
+    drag = {
+      mode: handle.getAttribute("data-drag"),
+      corner: handle.getAttribute("data-corner") || "",
+      start: stagePoint(ev),
+      origin: { x: element.x, y: element.y, w: element.width, h: element.height },
+      measured: { w: rect.w, h: rect.h },
+      moved: false
+    };
+    handle.setPointerCapture && handle.setPointerCapture(ev.pointerId);
+  }
+
+  function moveDrag(ev) {
+    if (!drag) return;
+    var element = findElement(selectedId);
+    if (!element) return;
+    var point = stagePoint(ev);
+    var dx = point.x - drag.start.x;
+    var dy = point.y - drag.start.y;
+    if (!drag.moved && Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    drag.moved = true;
+
+    if (drag.mode === "move") {
+      // 锚点决定偏移的方向：右锚元素的 x 是"从右边数进来"，所以往右拖是减小 x。
+      var sx = element.anchor === "topRight" || element.anchor === "bottomRight" ? -1 : 1;
+      var sy = element.anchor === "bottomLeft" || element.anchor === "bottomRight" ? -1 : 1;
+      element.x = Math.round(drag.origin.x + dx * sx);
+      element.y = Math.round(drag.origin.y + dy * sy);
+    } else {
+      var corner = drag.corner;
+      var west = corner === "sw";
+      var south = corner === "s" || corner === "se" || corner === "sw";
+      // 宽度为 0 是"内容自适应"；第一次拉尺寸时把它固定成当前量到的宽度，
+      // 否则拖了半天气死不动。
+      var baseW = drag.origin.w > 0 ? drag.origin.w : drag.measured.w;
+      var baseH = drag.origin.h > 0 ? drag.origin.h : drag.measured.h;
+      if (corner === "e" || corner === "se" || corner === "sw") {
+        var dw = (west ? -dx : dx) * (element.anchor === "topRight" || element.anchor === "bottomRight" ? -1 : 1);
+        element.width = Math.max(0, Math.round(baseW + dw));
+      }
+      if (south) {
+        var dh = dy * (element.anchor === "bottomLeft" || element.anchor === "bottomRight" ? -1 : 1);
+        element.height = Math.max(0, Math.round(baseH + dh));
+      }
+      // 高度只在用户真的拉过之后才写死；否则保持自适应，让内容决定。
+      if (south && drag.origin.h <= 0 && Math.abs(dh) < 3) element.height = 0;
+    }
+
+    pushDraft();
     renderHandles();
-    updateStatus();
+    renderInspectorGeometry();
+    markDirty();
   }
 
-  function renderPresets() {
-    if (!ui.presetRow) return;
-    ui.presetRow.textContent = "";
-    (presets.presets || []).forEach(function (name) {
-      var button = el("button", "btn");
-      button.type = "button";
-      // The label goes in its own clipped span. text-overflow does not apply to
-      // the anonymous text of a flex container, which is why these used to spill
-      // out of their buttons instead of ellipsising.
-      var caption = el("span", "clip");
-      caption.textContent = (presets.labels && presets.labels[name]) || name;
-      button.appendChild(caption);
-      button.title = name;
-      button.classList.toggle("is-active", name === presets.current);
-      button.setAttribute("aria-pressed", name === presets.current ? "true" : "false");
-      on(button, "click", function () { switchPreset(name); });
-      ui.presetRow.appendChild(button);
-    });
+  function endDrag() {
+    if (!drag) return;
+    var moved = drag.moved;
+    drag = null;
+    if (moved) {
+      log("已移动/缩放 " + (findElement(selectedId) || {}).id, "");
+      renderInspector();
+      renderLayers();
+      // 松手时 iframe 已经画完了，但这里的 rects 还是拖动前量的那一份。
+      // 不重量一次，审计和选择框都会停在旧位置上。
+      refreshGeometry();
+    }
+  }
+
+  // ==========================================================================
+  // 7. 渲染 —— 图层
+  // ==========================================================================
+
+  function findElement(id) {
+    if (!doc || !doc.elements) return null;
+    for (var i = 0; i < doc.elements.length; i++) {
+      if (doc.elements[i].id === id) return doc.elements[i];
+    }
+    return null;
+  }
+
+  function elementName(element) {
+    var spec = TYPE_BY_KEY[element.type];
+    return element.label || (spec ? spec.name : element.type);
   }
 
   function renderLayers() {
-    if (!ui.layerList) return;
-    ui.layerList.textContent = "";
-    if (!layout) return;
+    var host = $("panelLayers");
+    clear(host);
+    if (!doc) return;
 
-    if (!layout.elements.length) {
-      var empty = el("li", "ed-empty");
-      empty.textContent = "版面里还没有元素。用上方的 + 添加一个文本元素，或切换一个预设。";
-      ui.layerList.appendChild(empty);
-      updateStatus();
-      return;
-    }
+    var add = el("div", "ed-sec");
+    var addHead = el("div", "ed-sec-head");
+    addHead.appendChild(el("h2", "ed-sec-title", "添加元素"));
+    add.appendChild(addHead);
 
-    layout.elements.forEach(function (element) {
-      var li = el("li", "ed-layer");
-      li.classList.toggle("is-selected", element.id === selectedId);
-      li.classList.toggle("is-hidden", element.visible === false);
-      li.setAttribute("data-id", element.id);
+    FAMILIES.forEach(function (family) {
+      var group = el("div", "ed-palette-group");
+      group.appendChild(el("div", "ed-palette-group-title", family));
+      var grid = el("div", "ed-palette-grid");
+      TYPES.filter(function (t) { return t.family === family; }).forEach(function (spec) {
+        var button = el("button", "ed-palette-btn");
+        button.type = "button";
+        button.title = spec.desc;
+        button.innerHTML = icon(spec.icon) + "<span>" + esc(spec.name) + "</span>";
+        button.addEventListener("click", function () { addElement(spec); });
+        grid.appendChild(button);
+      });
+      group.appendChild(grid);
+      add.appendChild(group);
+    });
+    host.appendChild(add);
+
+    var list = el("div", "ed-sec");
+    var head = el("div", "ed-sec-head");
+    head.appendChild(el("h2", "ed-sec-title", "图层（" + (doc.elements || []).length + "）"));
+    var delBtn = el("button", "btn btn-sm btn-danger", "删除");
+    delBtn.type = "button";
+    delBtn.addEventListener("click", removeSelected);
+    head.appendChild(delBtn);
+    list.appendChild(head);
+
+    var ul = el("ul", "ed-layers");
+    (doc.elements || []).forEach(function (element, index) {
+      var spec = TYPE_BY_KEY[element.type] || { name: element.type, icon: "text" };
+      var li = el("li", "ed-layer" + (element.id === selectedId ? " is-active" : ""));
+      li.setAttribute("data-index", String(index));
+      li.setAttribute("draggable", "true");
 
       var grip = el("span", "ed-layer-grip");
-      grip.innerHTML = ICONS.grip;
+      grip.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+        '<circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>' +
+        '<circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>' +
+        '<circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
+      li.appendChild(grip);
 
-      var name = el("span", "ed-layer-name");
-      name.textContent = element.label || element.id;
-      name.title = element.id + " · " + element.type;
+      var ic = el("span", "ed-layer-icon");
+      ic.innerHTML = icon(spec.icon);
+      li.appendChild(ic);
 
-      var type = el("span", "ed-layer-type");
-      type.textContent = element.type;
+      var text = el("span", "ed-layer-text");
+      text.appendChild(el("span", "ed-layer-name", elementName(element)));
+      var scenes = (element.scenes && element.scenes.length)
+        ? element.scenes.map(function (s) {
+            return SCENES.filter(function (x) { return x[0] === s; }).map(function (x) { return x[1]; })[0] || s;
+          }).join("/")
+        : "全部场景";
+      var at = element.anchor === "center" ? "居中" :
+        (ANCHORS.filter(function (a) { return a[0] === element.anchor; })[0] || ["", element.anchor])[1];
+      text.appendChild(el("span", "ed-layer-meta",
+        element.id + " · " + at + " · " + scenes));
+      li.appendChild(text);
 
-      var eye = el("button", "ed-layer-eye");
+      var actions = el("span", "ed-layer-actions");
+      var eye = el("button", "ed-iconbtn" + (element.visible === false ? " is-off" : ""));
       eye.type = "button";
-      eye.innerHTML = element.visible === false ? ICONS.eyeOff : ICONS.eye;
-      eye.title = element.visible === false ? "显示这个元素" : "隐藏这个元素";
-      eye.setAttribute("aria-label", eye.title);
-      eye.setAttribute("aria-pressed", element.visible === false ? "false" : "true");
-      on(eye, "click", function (ev) {
+      eye.title = element.visible === false ? "上播：关" : "上播：开";
+      eye.innerHTML = element.visible === false
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 4l16 16"/><path d="M9.5 5.6A9 9 0 0 1 22 12a15 15 0 0 1-3 4M6 7.2A15 15 0 0 0 2 12a9 9 0 0 0 12.5 5.5"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.4"/></svg>';
+      eye.addEventListener("click", function (ev) {
         ev.stopPropagation();
         element.visible = element.visible === false;
-        markDirty();
-        renderLayers();
-        renderInspector();
-        renderHandles();
+        changed();
+      });
+      actions.appendChild(eye);
+      li.appendChild(actions);
+
+      li.addEventListener("click", function () { select(element.id); });
+      li.addEventListener("dragstart", function (ev) {
+        ev.dataTransfer.setData("text/plain", String(index));
+        li.classList.add("is-dragging");
+      });
+      li.addEventListener("dragend", function () { li.classList.remove("is-dragging"); });
+      li.addEventListener("dragover", function (ev) {
+        ev.preventDefault();
+        var r = li.getBoundingClientRect();
+        var before = ev.clientY < r.top + r.height / 2;
+        li.classList.toggle("is-dropbefore", before);
+        li.classList.toggle("is-dropafter", !before);
+      });
+      li.addEventListener("dragleave", function () {
+        li.classList.remove("is-dropbefore", "is-dropafter");
+      });
+      li.addEventListener("drop", function (ev) {
+        ev.preventDefault();
+        li.classList.remove("is-dropbefore", "is-dropafter");
+        var from = parseInt(ev.dataTransfer.getData("text/plain"), 10);
+        if (!isFinite(from)) return;
+        var r = li.getBoundingClientRect();
+        var before = ev.clientY < r.top + r.height / 2;
+        var to = before ? index : index + 1;
+        reorder(from, to);
       });
 
-      li.appendChild(grip);
-      li.appendChild(name);
-      li.appendChild(type);
-      li.appendChild(eye);
-      on(li, "click", function () {
-        selectedId = element.id;
-        renderLayers();
-        renderInspector();
-        renderHandles();
-        updateStatus();
-      });
-      ui.layerList.appendChild(li);
+      ul.appendChild(li);
     });
+    list.appendChild(ul);
+    list.appendChild(el("p", "ed-hint",
+      "列表顺序就是绘制顺序：靠前 = 在后面。视口级元素（信息条、安全框）习惯放最前。"));
+
+    host.appendChild(list);
   }
 
-  function field(label, node, wide) {
-    var wrap = el("label", "ed-field" + (wide ? " is-wide" : ""));
-    var caption = el("span");
-    caption.textContent = label;
-    wrap.appendChild(caption);
-    wrap.appendChild(node);
-    return wrap;
+  function reorder(from, to) {
+    if (from === to || from === to - 1) return;
+    var moving = doc.elements.splice(from, 1)[0];
+    if (!moving) return;
+    if (to > from) to--;
+    doc.elements.splice(clamp(to, 0, doc.elements.length), 0, moving);
+    log("调整图层顺序：" + moving.id, "");
+    changed();
   }
 
-  function section(title, content) {
-    var wrap = el("div", "ed-section");
-    var head = el("div", "ed-section-title");
-    var text = el("span");
-    text.textContent = title;
-    head.appendChild(text);
-    wrap.appendChild(head);
-    wrap.appendChild(content);
-    return wrap;
-  }
-
-  function numberInput(value, step, onChange) {
-    var input = el("input");
-    input.type = "number";
-    input.step = step || 1;
-    input.value = value;
-    on(input, "change", function () {
-      var next = parseFloat(input.value);
-      if (!isFinite(next)) { input.value = value; return; }
-      onChange(next);
-    });
-    return input;
-  }
-
-  function textInput(value, onChange) {
-    var input = el("input");
-    input.type = "text";
-    input.value = value === undefined || value === null ? "" : value;
-    on(input, "change", function () { onChange(input.value); });
-    return input;
-  }
-
-  function selectInput(options, value, onChange) {
-    var select = el("select");
-    options.forEach(function (pair) {
-      var label = Array.isArray(pair) ? pair[1] : pair;
-      var val = Array.isArray(pair) ? pair[0] : pair;
-      var option = el("option");
-      option.value = val;
-      option.textContent = label;
-      if (val === value) option.selected = true;
-      select.appendChild(option);
-    });
-    on(select, "change", function () { onChange(select.value); });
-    return select;
-  }
-
-  function colorInput(value, fallback, onChange) {
-    var input = el("input");
-    input.type = "color";
-    input.value = COLOR_RE.test(String(value || "")) && String(value).length === 7
-      ? String(value)
-      : fallback;
-    on(input, "input", function () { onChange(input.value.toUpperCase()); });
-    return input;
-  }
-
-  function checkbox(label, checked, onChange) {
-    var wrap = el("label", "ed-check");
-    var input = el("input");
-    input.type = "checkbox";
-    input.checked = !!checked;
-    on(input, "change", function () { onChange(input.checked); });
-    var span = el("span");
-    span.textContent = label;
-    wrap.appendChild(input);
-    wrap.appendChild(span);
-    return wrap;
-  }
-
-  function iconButton(icon, label, onClick, className) {
-    var node = el("button", "btn btn-icon" + (className ? " " + className : ""));
-    node.type = "button";
-    node.innerHTML = icon;
-    node.title = label;
-    node.setAttribute("aria-label", label);
-    on(node, "click", onClick);
-    return node;
-  }
-
-  function renderInspector() {
-    var body = ui.inspector;
-    if (!body) return;
-    body.textContent = "";
-
-    var element = selected();
-    if (!element) {
-      var empty = el("div", "ed-empty");
-      empty.textContent = "未选中元素。在画布上点一个框，或从左侧图层列表里选一个。";
-      body.appendChild(empty);
-      return;
-    }
-
-    // --- identity ---
-    var identity = el("div", "ed-grid");
-    identity.appendChild(field("名称", textInput(element.label, function (v) {
-      element.label = v; markDirty(); renderLayers();
-    }), true));
-    identity.appendChild(field("类型", (function () {
-      var span = el("input");
-      span.type = "text";
-      span.value = element.type;
-      span.readOnly = true;
-      span.title = "元素类型不可更改：每一种类型对应一套专门的绘制与数据绑定。";
-      return span;
-    })(), true));
-    body.appendChild(section("标识", identity));
-
-    // --- placement ---
-    var placement = el("div", "ed-grid");
-    placement.appendChild(field("锚点", selectInput(ANCHORS, element.anchor, function (v) {
-      // The anchored corner is the one that stays put, so changing it re-pins
-      // the element without touching its offset.
-      element.anchor = v; markDirty(); renderHandles(); renderInspector();
-    }), true));
-    placement.appendChild(field("X 偏移", numberInput(element.x, 1, function (v) {
-      element.x = Math.round(v); markDirty(); renderHandles();
-    })));
-    placement.appendChild(field("Y 偏移", numberInput(element.y, 1, function (v) {
-      element.y = Math.round(v); markDirty(); renderHandles();
-    })));
-    placement.appendChild(field("宽（0=自适应）", numberInput(element.width, 1, function (v) {
-      element.width = Math.max(0, Math.round(v)); markDirty(); renderHandles();
-    })));
-    placement.appendChild(field("高（0=自适应）", numberInput(element.height, 1, function (v) {
-      element.height = Math.max(0, Math.round(v)); markDirty(); renderHandles();
-    })));
-    body.appendChild(section("位置", placement));
-
-    var anchorNote = el("p", "ed-hint");
-    anchorNote.textContent = "偏移从锚定的那个角往画面里量，所以往右贴边永远填正数。缩放绕元素自己的角进行，贴哪边就还是贴哪边。";
-    body.appendChild(anchorNote);
-
-    // --- appearance ---
-    var appearance = el("div", "ed-grid");
-    appearance.appendChild(field("缩放", numberInput(element.scale, 0.05, function (v) {
-      element.scale = clamp(v, 0.05, 8); markDirty(); renderHandles();
-    })));
-    appearance.appendChild(field("不透明度", numberInput(element.opacity, 0.05, function (v) {
-      element.opacity = clamp(v, 0, 1); markDirty(); renderHandles();
-    })));
-    body.appendChild(section("外观", appearance));
-    body.appendChild(checkbox("显示（也可以点图层右侧的眼睛）", element.visible !== false, function (v) {
-      element.visible = v; markDirty(); renderLayers(); renderHandles();
-    }));
-
-    // --- scene gating ---
-    var sceneBox = el("div", "ed-grid");
-    SCENES.forEach(function (scene) {
-      sceneBox.appendChild(checkbox(SCENE_LABELS[scene], (element.scenes || []).indexOf(scene) >= 0,
-        function (checked) {
-          var scenes = Array.isArray(element.scenes) ? element.scenes.slice() : [];
-          var at = scenes.indexOf(scene);
-          if (checked && at < 0) scenes.push(scene);
-          if (!checked && at >= 0) scenes.splice(at, 1);
-          element.scenes = scenes;
-          markDirty();
-          renderHandles();
-        }));
-    });
-    var sceneSection = section("出现场景", sceneBox);
-    var sceneHint = el("p", "ed-hint");
-    sceneHint.textContent = "三个都不勾 = 所有场景都显示。";
-    sceneSection.appendChild(sceneHint);
-    body.appendChild(sceneSection);
-
-    // --- animation ---
-    var anim = isObject(element.anim) ? element.anim : (element.anim = {});
-    var animGrid = el("div", "ed-grid");
-    animGrid.appendChild(field("入场", selectInput(ENTERS, anim.enter, function (v) {
-      anim.enter = v; markDirty();
-    })));
-    animGrid.appendChild(field("数据变化", selectInput(UPDATES, anim.update, function (v) {
-      anim.update = v; markDirty();
-    })));
-    animGrid.appendChild(field("时长 ms", numberInput(anim.durationMs, 10, function (v) {
-      anim.durationMs = clamp(Math.round(v), 0, 4000); markDirty();
-    })));
-    animGrid.appendChild(field("缓动", selectInput(EASINGS, anim.easing, function (v) {
-      anim.easing = v; markDirty();
-    })));
-    body.appendChild(section("动画", animGrid));
-
-    // --- per-element style overrides ---
-    /* A checkbox decides whether an override exists at all, because "inherit
-       from the theme" is a real state and not the same as "happens to match the
-       theme right now". Collapsing the two would freeze the element against any
-       later theme change. */
-    var style = isObject(element.style) ? element.style : (element.style = {});
-    var styleGrid = el("div", "ed-grid");
-
-    styleGrid.appendChild(checkbox("覆盖主色", !!style.accent, function (checked) {
-      if (checked) style.accent = layout.theme.accent || "#FFC24B";
-      else delete style.accent;
-      markDirty(); renderInspector(); renderHandles();
-    }));
-    if (style.accent) {
-      styleGrid.appendChild(field("主色", colorInput(style.accent, "#FFC24B", function (v) {
-        style.accent = v; markDirty(); renderHandles();
-      })));
-    }
-
-    styleGrid.appendChild(checkbox("覆盖文字色", !!style.ink, function (checked) {
-      if (checked) style.ink = layout.theme.ink || "#F2F4F8";
-      else delete style.ink;
-      markDirty(); renderInspector(); renderHandles();
-    }));
-    if (style.ink) {
-      styleGrid.appendChild(field("文字色", colorInput(style.ink, "#F2F4F8", function (v) {
-        style.ink = v; markDirty(); renderHandles();
-      })));
-    }
-
-    styleGrid.appendChild(field("字号倍率", numberInput(
-      style.fontScale === undefined ? 1 : style.fontScale, 0.05, function (v) {
-        style.fontScale = clamp(v, 0.25, 4); markDirty(); renderHandles();
-      })));
-
-    var styleSection = section("着色", styleGrid);
-    styleSection.appendChild(checkbox("全部大写", !!style.uppercase, function (v) {
-      style.uppercase = v; markDirty(); renderHandles();
-    }));
-    body.appendChild(styleSection);
-
-    // --- bound text ---
-    if (element.type === "text") {
-      var textGrid = el("div", "ed-grid");
-      textGrid.appendChild(field("绑定路径", textInput(element.binding, function (v) {
-        element.binding = v; markDirty();
-      }), true));
-      textGrid.appendChild(field("兜底文字", textInput(element.text, function (v) {
-        element.text = v; markDirty();
-      }), true));
-      var textSection = section("内容", textGrid);
-      var bindHint = el("p", "ed-hint");
-      bindHint.textContent = "例如 event.name、event.stage、sides[0].short、sides[0].score、clock.value。" +
-        "绑定取到值就用它，取不到才用兜底文字。";
-      textSection.appendChild(bindHint);
-      body.appendChild(textSection);
-    }
-
-    // --- actions ---
-    var actions = el("div", "ed-row");
-    actions.appendChild(iconButton(ICONS.up, "上移一层", function () { reorder(-1); }));
-    actions.appendChild(iconButton(ICONS.down, "下移一层", function () { reorder(1); }));
-    actions.appendChild(iconButton(ICONS.copy, "复制这个元素", function () { duplicate(); }));
-    var actionSection = section("顺序", actions);
-    var orderHint = el("p", "ed-hint");
-    orderHint.textContent = "越靠后越上层。";
-    actionSection.appendChild(orderHint);
-    body.appendChild(actionSection);
-  }
-
-  function renderTheme() {
-    var body = ui.theme;
-    if (!body || !layout) return;
-    body.textContent = "";
-
-    var theme = layout.theme;
-    var grid = el("div", "ed-grid");
-    [["accent", "主色", "#FFC24B"],
-     ["live", "直播色", "#FF4D4D"],
-     ["ink", "文字", "#F2F4F8"],
-     ["inkDim", "次要文字", "#9AA4B2"],
-     ["panelTop", "面板上沿", "#1A2030"],
-     ["panelBottom", "面板下沿", "#0C1018"],
-     ["border", "边框", "#FFFFFF"],
-     ["home", "主队", "#4C9AFF"],
-     ["away", "客队", "#FF6B6B"]].forEach(function (row) {
-      grid.appendChild(field(row[1], colorInput(theme[row[0]], row[2], function (v) {
-        theme[row[0]] = v;
-        applyEditorTheme(theme);
-        markDirty();
-        renderAll();
-      })));
-    });
-    body.appendChild(section("调色板", grid));
-
-    var safeGrid = el("div", "ed-grid");
-    safeGrid.appendChild(field("安全边距 X", numberInput(layout.safe.x, 1, function (v) {
-      layout.safe.x = Math.max(0, Math.round(v)); markDirty(); renderHandles();
-    })));
-    safeGrid.appendChild(field("安全边距 Y", numberInput(layout.safe.y, 1, function (v) {
-      layout.safe.y = Math.max(0, Math.round(v)); markDirty(); renderHandles();
-    })));
-    var safeSection = section("安全边距", safeGrid);
-    var hint = el("p", "ed-hint");
-    hint.textContent = "安全边距是画面四周留白的参考值：安全框照它绘制，各元素的默认偏移也是照它定的。" +
-      "颜色末尾两位是透明度（#RRGGBBAA）。";
-    safeSection.appendChild(hint);
-    body.appendChild(safeSection);
-  }
-
-  function renderJson() {
-    if (!ui.json || !layout) return;
-    var text = pretty(stripInternal(layout));
-    // The operator's typing wins: refilling under a cursor mid-edit is how a
-    // valid document gets silently mangled.
-    if (document.activeElement !== ui.json) ui.json.value = text;
-  }
-
-  function stripInternal(doc) {
-    var copy = clone(doc);
-    Object.keys(copy).forEach(function (key) {
-      if (key.indexOf("__") === 0) delete copy[key];
-    });
-    return copy;
-  }
-
-  // ---- the drag layer ----------------------------------------------------
-
-  function renderHandles() {
-    var layer = ui.handles;
-    if (!layer || !layout) return;
-    layer.textContent = "";
-
-    var canvasWidth = layout.canvas.width;
-    var k = (ui.canvas.getBoundingClientRect().width || canvasWidth) / canvasWidth;
-
-    // The safe-area guide, from the document's own margins.
-    var safe = layout.safe || { x: 0, y: 0 };
-    var guide = el("div", "ed-safe-guide");
-    guide.style.left = (safe.x * k) + "px";
-    guide.style.top = (safe.y * k) + "px";
-    guide.style.width = ((canvasWidth - safe.x * 2) * k) + "px";
-    guide.style.height = ((layout.canvas.height - safe.y * 2) * k) + "px";
-    guide.title = "安全区：所有元素默认都贴在这条线以内";
-    layer.appendChild(guide);
-
-    measure().forEach(function (entry) {
-      var element = entry.element;
-      if (!element || !element.id) return;
-
-      var box = el("div", "ed-handle");
-      box.classList.toggle("is-selected", element.id === selectedId);
-      box.setAttribute("data-id", element.id);
-
-      if (!entry.rect) {
-        // Not on air: no geometry to drag, but the layer list still selects it.
-        box.classList.add("is-offstage");
-        box.style.left = "0px";
-        box.style.top = "0px";
-        box.style.width = "0px";
-        box.style.height = "0px";
-        box.title = "这个元素在当前场景下不显示";
-        layer.appendChild(box);
-        return;
-      }
-
-      box.style.left = (entry.rect.left * k) + "px";
-      box.style.top = (entry.rect.top * k) + "px";
-      box.style.width = (entry.rect.width * k) + "px";
-      box.style.height = (entry.rect.height * k) + "px";
-
-      if (element.id === selectedId) {
-        var label = el("span", "ed-handle-label");
-        label.textContent = element.label || element.id;
-        box.appendChild(label);
-        var grip = el("span", "grip");
-        on(grip, "pointerdown", function (ev) { startResize(ev, element, entry.rect, k); });
-        box.appendChild(grip);
-      }
-
-      on(box, "pointerdown", function (ev) {
-        selectedId = element.id;
-        renderLayers();
-        renderInspector();
-        updateStatus();
-        startDrag(ev, element, k);
-      });
-
-      layer.appendChild(box);
-    });
-  }
-
-  var dragState = null;
-
-  function startDrag(ev, element, k) {
-    if (ev.target && ev.target.classList && ev.target.classList.contains("grip")) return;
-    ev.preventDefault();
-    dragState = {
-      mode: "move",
-      element: element,
-      startX: ev.clientX,
-      startY: ev.clientY,
-      x0: toNum(element.x, 0),
-      y0: toNum(element.y, 0),
-      k: k
-    };
-    beginPointer(ev);
-  }
-
-  function startResize(ev, element, rect, k) {
-    ev.preventDefault();
-    ev.stopPropagation();
-    dragState = {
-      mode: "resize",
-      element: element,
-      startX: ev.clientX,
-      startY: ev.clientY,
-      width0: toNum(element.width, 0) || (rect.width / k),
-      height0: toNum(element.height, 0) || (rect.height / k),
-      k: k
-    };
-    beginPointer(ev);
-  }
-
-  function beginPointer(ev) {
-    try { ev.target.setPointerCapture(ev.pointerId); } catch (e) { /* not supported */ }
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", endPointer);
-  }
-
-  function onPointerMove(ev) {
-    if (!dragState) return;
-    var dx = (ev.clientX - dragState.startX) / dragState.k;
-    var dy = (ev.clientY - dragState.startY) / dragState.k;
-    var element = dragState.element;
-    var anchor = element.anchor || "topLeft";
-
-    if (dragState.mode === "move") {
-      // The offset runs inward from the anchored corner, so dragging toward that
-      // corner decreases it. Without this the element would move the wrong way
-      // whenever it is pinned to a right or bottom edge, which is half of them.
-      var right = anchor === "topRight" || anchor === "bottomRight";
-      var bottom = anchor === "bottomLeft" || anchor === "bottomRight";
-      element.x = Math.round(dragState.x0 + (right ? -dx : dx));
-      element.y = Math.round(dragState.y0 + (bottom ? -dy : dy));
-    } else {
-      // The handle tracks the rendered box, so the delta has to be divided by
-      // the element's own scale to become a width in the document's units.
-      var scale = effectiveScale(element);
-      element.width = Math.max(0, Math.round(dragState.width0 + dx / scale));
-      element.height = Math.max(0, Math.round(dragState.height0 + dy / scale));
-    }
-
-    markDirty();
-    renderHandles();
-    updateInspectorValues();
-  }
-
-  function updateInspectorValues() {
-    // Rebuilding the inspector on every pointer move would take the focus out of
-    // whatever field is being typed into, so only the numbers are refreshed.
-    var element = selected();
-    if (!element || !ui.inspector) return;
-    var inputs = ui.inspector.querySelectorAll("input[type=number]");
-    if (inputs.length >= 5) {
-      inputs[1].value = element.x;
-      inputs[2].value = element.y;
-      inputs[3].value = element.width;
-      inputs[4].value = element.height;
-    }
-  }
-
-  function endPointer() {
-    dragState = null;
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", endPointer);
-    renderInspector();
-  }
-
-  function effectiveScale(element) {
-    var fontScale = element.style && isFinite(element.style.fontScale) ? element.style.fontScale : 1;
-    var scale = (isFinite(element.scale) ? element.scale : 1) * fontScale;
-    return clamp(scale, 0.05, 16);
-  }
-
-  // ---- element operations ------------------------------------------------
-
-  function reorder(delta) {
-    var element = selected();
-    if (!element) return;
-    var index = layout.elements.indexOf(element);
-    var target = index + delta;
-    if (target < 0 || target >= layout.elements.length) return;
-    layout.elements.splice(index, 1);
-    layout.elements.splice(target, 0, element);
-    markDirty();
-    renderLayers();
-    renderHandles();
-  }
-
-  function duplicate() {
-    var element = selected();
-    if (!element) return;
-    var copy = clone(element);
-    copy.id = uniqueId(element.type);
-    copy.label = (element.label || element.type) + " 副本";
-    copy.x = toNum(element.x, 0) + 24;
-    copy.y = toNum(element.y, 0) + 24;
-    layout.elements.push(copy);
-    selectedId = copy.id;
-    markDirty();
-    renderLayers();
-    renderInspector();
-    renderHandles();
-    note("已复制元素 · " + copy.id);
-  }
-
-  /** Sane starting geometry for a freshly added element. */
-  var TYPE_DEFAULTS = {
-    matchBug: { anchor: "topLeft", x: 26, y: 22, width: 346, height: 0 },
-    eventInfo: { anchor: "topRight", x: 26, y: 22, width: 432, height: 0 },
-    timer: { anchor: "bottomRight", x: 26, y: 0, width: 0, height: 0 },
-    lowerThird: { anchor: "bottomLeft", x: 26, y: 0, width: 768, height: 0 },
-    ticker: { anchor: "bottomLeft", x: 0, y: 0, width: 1920, height: 53 },
-    announcement: { anchor: "center", x: 0, y: -130, width: 0, height: 0 },
-    frame: { anchor: "topLeft", x: 0, y: 0, width: 0, height: 0 },
-    text: { anchor: "topRight", x: 40, y: 120, width: 0, height: 0 }
-  };
-
-  function addElement(type) {
-    var entry = TYPES.filter(function (pair) { return pair[0] === type; })[0] || TYPES[7];
-    var defaults = TYPE_DEFAULTS[type] || TYPE_DEFAULTS.text;
+  function addElement(spec) {
+    var id = uniqueId(spec.type);
     var element = {
-      id: uniqueId(type),
-      type: type,
-      label: entry[1],
+      id: id,
+      type: spec.type,
+      label: spec.name,
       visible: true,
-      // A second ticker or a second announcement in the same scene would be two
-      // elements fighting for one slot, so a duplicate type starts switched off
-      // and finished work reported back to the operator instead of silently
-      // overlapping.
       scenes: [],
-      anchor: defaults.anchor,
-      x: defaults.x,
-      y: defaults.y,
-      width: defaults.width,
-      height: defaults.height,
-      scale: 1,
-      opacity: 1,
-      text: type === "text" ? "文字 TEXT" : "",
-      binding: "",
+      anchor: spec.anchor,
+      x: spec.x, y: spec.y,
+      width: spec.w, height: spec.h,
+      scale: 1, opacity: 1,
+      text: "", binding: "",
+      options: {},
       style: { fontScale: 1, uppercase: false },
       anim: { enter: "fade", update: "pop", durationMs: 420, easing: "outCubic" }
     };
-    if (hasType(type)) {
-      element.visible = false;
-      note("已添加 " + entry[1] + "（默认隐藏：这个类型已经在版面里了，先调好再打开）");
-    } else {
-      note("已添加 " + entry[1]);
-    }
-    layout.elements.push(element);
-    selectedId = element.id;
-    markDirty();
-    renderLayers();
-    renderInspector();
-    renderHandles();
-  }
-
-  function hasType(type) {
-    return layout.elements.some(function (element) {
-      return element && element.type === type && element.id !== selectedId;
+    spec.options.forEach(function (o) {
+      if (o.type === "bool") element.options[o.key] = "true";
     });
+    if (spec.type === "ticker") { element.options.mode = "scroll"; element.scenes = []; }
+    if (spec.type === "frame") { element.options.arms = "true"; }
+    if (spec.type === "announcement" || spec.type === "headToHead" || spec.type === "kpiTiles") {
+      element.options.window = "allow";
+    }
+    doc.elements.push(element);
+    log("新建元素 " + id + "（" + spec.name + "）", "ok");
+    select(id);
+    changed();
   }
 
   function uniqueId(base) {
     var used = {};
-    layout.elements.forEach(function (element) { if (element) used[element.id] = true; });
+    (doc.elements || []).forEach(function (e) { used[e.id] = true; });
     if (!used[base]) return base;
-    for (var i = 2; i < 1000; i++) {
+    for (var i = 2; i < 999; i++) {
       if (!used[base + "-" + i]) return base + "-" + i;
     }
     return base + "-" + Date.now();
   }
 
-  function renderAddTypes() {
-    if (!ui.addType) return;
-    ui.addType.textContent = "";
-    TYPES.forEach(function (pair) {
-      var option = el("option");
-      option.value = pair[0];
-      option.textContent = pair[1];
-      ui.addType.appendChild(option);
-    });
-    ui.addType.value = "text";
+  function removeSelected() {
+    var index = indexOfSelected();
+    if (index < 0) return;
+    var gone = doc.elements[index];
+    doc.elements.splice(index, 1);
+    selectedId = doc.elements.length ? doc.elements[Math.min(index, doc.elements.length - 1)].id : "";
+    log("删除元素 " + gone.id, "warn");
+    changed();
+    renderHandles();
   }
 
-  function removeSelected() {
-    var element = selected();
-    if (!element) return;
-    var index = layout.elements.indexOf(element);
-    layout.elements.splice(index, 1);
-    selectedId = null;
-    markDirty();
+  function indexOfSelected() {
+    if (!doc || !selectedId) return -1;
+    for (var i = 0; i < doc.elements.length; i++) {
+      if (doc.elements[i].id === selectedId) return i;
+    }
+    return -1;
+  }
+
+  function select(id) {
+    selectedId = id;
     renderLayers();
     renderInspector();
     renderHandles();
-    updateStatus();
-    note("已删除元素 · " + element.id);
+    renderBudget();
   }
 
-  // ---- talking to the server ---------------------------------------------
-
-  function switchPreset(name) {
-    if (!originOk) { note("请通过 http 打开本页", "bad"); return; }
-    if (dirty && !window.confirm("切换预设会丢弃当前未保存的改动，继续？")) return;
-    window.fetch("/api/layout?preset=" + encodeURIComponent(name), { cache: "no-store" })
-      .then(function (res) {
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        return res.json();
-      })
-      .then(function (doc) {
-        presets.current = name;
-        saved = null;
-        dirty = false;
-        adopt(doc, "预设 " + name);
-        note("已切换到预设 · " + name, "ok");
-      })
-      ["catch"](function (err) {
-        note("切换预设失败 · " + (err && err.message), "bad");
-      });
+  function nudge(dx, dy) {
+    var element = findElement(selectedId);
+    if (!element) return;
+    var sx = element.anchor === "topRight" || element.anchor === "bottomRight" ? -1 : 1;
+    var sy = element.anchor === "bottomLeft" || element.anchor === "bottomRight" ? -1 : 1;
+    element.x = Math.round(element.x + dx * sx);
+    element.y = Math.round(element.y + dy * sy);
+    pushDraft();
+    renderHandles();
+    renderInspectorGeometry();
+    markDirty();
   }
 
-  function save() {
-    if (!originOk) { note("请通过 http 打开本页", "bad"); return; }
-    var body = pretty(stripInternal(layout));
-    // While this is in flight, an incoming document is almost certainly the echo
-    // of our own save rather than another operator. Without the flag the editor
-    // reports its own save as a conflict, which teaches an operator to ignore the
-    // one warning that must never be ignored.
-    saveInFlight = true;
-    updateStatus();
-    window.fetch("/api/layout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body
-    }).then(function (res) {
-      return res.text().then(function (text) { return { ok: res.ok, status: res.status, text: text }; });
-    }).then(function (result) {
-      saveInFlight = false;
-      if (!result.ok) {
-        note("保存失败 · HTTP " + result.status + " " + result.text, "bad");
-        updateStatus();
-        return;
-      }
-      dirty = false;
-      ui.json.classList.remove("is-bad");
-      try {
-        var stored = JSON.parse(result.text);
-        layout = stored;
-        saved = clone(stored);
-        presets.current = layout.name || presets.current;
-        applyEditorTheme(layout.theme);
-        applyToFrame();
-        renderAll();
-      } catch (e) { /* a body we cannot read is not worth a second complaint */ }
-      note("已保存并广播", "ok");
-      updateStatus();
-    })["catch"](function (err) {
-      saveInFlight = false;
-      note("保存失败 · " + (err && err.message), "bad");
-      updateStatus();
+  // ==========================================================================
+  // 8. 渲染 —— 属性检查器
+  // ==========================================================================
+
+  function field(label, control) {
+    var wrap = el("div", "ed-field");
+    wrap.appendChild(el("label", "ed-label", label));
+    wrap.appendChild(control);
+    return wrap;
+  }
+
+  function textInput(value, onChange, placeholder) {
+    var input = el("input", "ed-input");
+    input.type = "text";
+    input.value = value === undefined || value === null ? "" : value;
+    if (placeholder) input.placeholder = placeholder;
+    input.addEventListener("input", function () { onChange(input.value); });
+    return input;
+  }
+
+  function numberInput(value, onChange, placeholder, min, max, step) {
+    var input = el("input", "ed-input");
+    input.type = "number";
+    input.value = value === undefined || value === null || value === "" ? "" : value;
+    if (placeholder) input.placeholder = placeholder;
+    if (min !== undefined) input.min = String(min);
+    if (max !== undefined) input.max = String(max);
+    if (step !== undefined) input.step = String(step);
+    input.addEventListener("input", function () {
+      var raw = input.value.trim();
+      onChange(raw === "" ? "" : String(clamp(Number(raw), min === undefined ? -1e6 : min,
+        max === undefined ? 1e6 : max)));
     });
+    return input;
   }
 
-  function revert() {
-    if (!saved) return;
-    layout = clone(saved);
-    if (selectedId && !elementById(selectedId)) selectedId = null;
-    dirty = false;
-    applyEditorTheme(layout.theme);
-    applyToFrame();
-    renderAll();
-    note("已放弃改动");
+  function selectInput(value, values, onChange) {
+    var select = el("select", "ed-select");
+    values.forEach(function (pair) {
+      var option = el("option", "", pair[1]);
+      option.value = pair[0];
+      select.appendChild(option);
+    });
+    select.value = value === undefined || value === null ? "" : String(value);
+    if (select.selectedIndex < 0) select.selectedIndex = 0;
+    select.addEventListener("change", function () { onChange(select.value); });
+    return select;
   }
 
-  function fetchLayout() {
-    if (!originOk || typeof window.fetch !== "function") return;
-    window.fetch("/api/layout", { cache: "no-store" })
-      .then(function (res) { return res.ok ? res.json() : null; })
-      .then(function (doc) {
-        if (!doc) return;
-        if (dirty) {
-          // Reported, not applied. Another operator's save must not discard
-          // unsaved work without a person deciding that it should.
-          note("服务端版面已变化，但本页有未保存改动，未覆盖", "bad");
-          return;
+  function checkInput(checked, label, onChange) {
+    var wrap = el("label", "ed-check");
+    var input = el("input");
+    input.type = "checkbox";
+    input.checked = !!checked;
+    input.addEventListener("change", function () { onChange(input.checked); });
+    wrap.appendChild(input);
+    wrap.appendChild(el("span", "", label));
+    return wrap;
+  }
+
+  function sliderRow(value, min, max, step, format, onChange) {
+    var row = el("div", "ed-slider-row");
+    var range = el("input", "ed-range");
+    range.type = "range";
+    range.min = String(min); range.max = String(max); range.step = String(step);
+    range.value = String(value);
+    var readout = el("span", "ed-range-value", format(value));
+    range.addEventListener("input", function () {
+      var v = Number(range.value);
+      readout.textContent = format(v);
+      onChange(v);
+    });
+    row.appendChild(range);
+    row.appendChild(readout);
+    return row;
+  }
+
+  function renderInspector() {
+    var host = $("panelInspector");
+    clear(host);
+    var element = findElement(selectedId);
+
+    if (!element) {
+      var empty = el("div", "ed-empty");
+      empty.innerHTML = icon("bug");
+      empty.appendChild(el("div", "", "画布上点一个元素，或者到左边的「图层」里新建一个。"));
+      host.appendChild(empty);
+      return;
+    }
+
+    var spec = TYPE_BY_KEY[element.type] || { name: element.type, options: [], desc: "" };
+
+    // ---- 标识 ----
+    var ident = el("div", "ed-sec");
+    var head = el("div", "ed-sec-head");
+    head.appendChild(el("h2", "ed-sec-title", spec.name));
+    var del = el("button", "btn btn-sm btn-danger", "删除");
+    del.type = "button";
+    del.addEventListener("click", removeSelected);
+    head.appendChild(del);
+    ident.appendChild(head);
+    ident.appendChild(el("p", "ed-hint", spec.desc || ""));
+    host.appendChild(ident);
+
+    // ---- 内容 ----
+    var content = el("div", "ed-sec");
+    content.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "内容"));
+    content.appendChild(field("名称（只在编辑器里显示）", textInput(element.label,
+      function (v) { element.label = v; changed({ inspector: false }); })));
+
+    if (element.type === "text") {
+      content.appendChild(field("字面文本", textInput(element.text,
+        function (v) { element.text = v; changed({ skipInspector: true }); }, "直接显示这行字")));
+      content.appendChild(field("数据绑定路径", textInput(element.binding,
+        function (v) { element.binding = v; changed({ skipInspector: true }); },
+        "例如 sides[0].score、event.stage")));
+      content.appendChild(el("p", "ed-hint", "绑定路径非空时优先于字面文本。"));
+    }
+    host.appendChild(content);
+
+    // ---- 数据源参数 ----
+    if (spec.options && spec.options.length) {
+      var options = el("div", "ed-sec");
+      options.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "参数"));
+      spec.options.forEach(function (o) {
+        var value = element.options ? element.options[o.key] : undefined;
+        var set = function (v) {
+          if (!element.options) element.options = {};
+          if (v === "" || v === undefined) delete element.options[o.key];
+          else element.options[o.key] = String(v);
+          changed({ skipInspector: true });
+        };
+        if (o.type === "select") {
+          options.appendChild(field(o.label, selectInput(value === undefined ? "" : value,
+            o.values, set)));
+        } else if (o.type === "bool") {
+          options.appendChild(field(o.label, checkInput(value === "true" || value === true,
+            "启用", function (v) { set(v ? "true" : ""); })));
+        } else if (o.type === "number") {
+          options.appendChild(field(o.label,
+            numberInput(value, set, o.placeholder, o.min, o.max, o.step)));
+        } else {
+          options.appendChild(field(o.label, textInput(value, set, o.placeholder)));
         }
-        adopt(doc, "GET /api/layout");
-        saved = clone(doc);
-      })
-      ["catch"](function (err) {
-        note("拉取版面失败 · " + (err && err.message), "bad");
       });
+      host.appendChild(options);
+    }
+
+    // ---- 其它参数（自由键值） ----
+    var KNOWN = {};
+    (spec.options || []).forEach(function (o) { KNOWN[o.key] = true; });
+
+    var extra = el("div", "ed-sec");
+    var extraHead = el("div", "ed-sec-head");
+    extraHead.appendChild(el("h2", "ed-sec-title", "其它参数"));
+    var addKv = el("button", "btn btn-sm", "新增");
+    addKv.type = "button";
+    addKv.addEventListener("click", function () {
+      var key = window.prompt("参数名（渲染器不认识的键会原样保留在文档里）");
+      if (!key) return;
+      if (!element.options) element.options = {};
+      element.options[key] = "";
+      changed();
+    });
+    extraHead.appendChild(addKv);
+    extra.appendChild(extraHead);
+
+    var kv = el("div", "ed-kv");
+    var extraKeys = Object.keys(element.options || {}).filter(function (k) { return !KNOWN[k]; });
+    extraKeys.forEach(function (key) {
+      var row = el("span", "ed-kv-row");
+      row.appendChild(el("span", "ed-kv-key", key + " ="));
+      var input = el("input", "ed-input");
+      input.style.width = "92px";
+      input.style.height = "22px";
+      input.value = element.options[key];
+      input.addEventListener("input", function () {
+        element.options[key] = input.value;
+        changed({ skipInspector: true, layers: false });
+      });
+      row.appendChild(input);
+      var del2 = el("button", "ed-kv-del");
+      del2.type = "button";
+      del2.setAttribute("aria-label", "删除参数");
+      del2.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+      del2.addEventListener("click", function () {
+        delete element.options[key];
+        changed();
+      });
+      row.appendChild(del2);
+      kv.appendChild(row);
+    });
+    // 画面窗口声明：这是"能不能压到中间"的唯一开关，所以它有专门的措辞，
+    // 而不是藏在其它参数里。
+    var windowRow = el("div", "ed-check");
+    var windowBox = el("input");
+    windowBox.type = "checkbox";
+    windowBox.checked = element.options && String(element.options.window).toLowerCase() === "allow";
+    windowBox.addEventListener("change", function () {
+      if (!element.options) element.options = {};
+      if (windowBox.checked) element.options.window = "allow";
+      else delete element.options.window;
+      log(windowBox.checked
+        ? element.id + " 现在允许占用画面窗口（中场大卡）"
+        : element.id + " 已收回画面窗口许可", windowBox.checked ? "warn" : "");
+      changed();
+      renderBudget();
+    });
+    windowRow.appendChild(windowBox);
+    windowRow.appendChild(el("span", "", "允许占用画面窗口（中场大卡）"));
+    var windowField = el("div", "ed-field");
+    windowField.appendChild(windowRow);
+    windowField.appendChild(el("p", "ed-hint",
+      "没勾的元素压到画面中央 60%×68% 就会被判为遮挡。勾了才会进中场大卡的预算。"));
+    extra.appendChild(windowField);
+    extra.appendChild(kv);
+    if (!extraKeys.length) {
+      extra.appendChild(el("p", "ed-hint", "没有额外参数。上面没列出来的键会原样保留在版面文档里。"));
+    }
+    host.appendChild(extra);
+
+    // ---- 布局 ----
+    var layout = el("div", "ed-sec");
+    layout.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "布局"));
+    layout.appendChild(field("锚点", selectInput(element.anchor, ANCHORS,
+      function (v) { element.anchor = v; changed(); })));
+    var geo = el("div", "ed-inline");
+    geo.appendChild(field("X（向内）", numberInput(element.x,
+      function (v) { element.x = Number(v || 0); changed({ inspector: false }); renderHandles(); },
+      "0", -2000, 4000, 1)));
+    geo.appendChild(field("Y（向内）", numberInput(element.y,
+      function (v) { element.y = Number(v || 0); changed({ inspector: false }); renderHandles(); },
+      "0", -2000, 4000, 1)));
+    layout.appendChild(geo);
+    var size = el("div", "ed-inline");
+    size.appendChild(field("宽（0=自适应）", numberInput(element.width,
+      function (v) { element.width = Number(v || 0); changed({ inspector: false }); renderHandles(); },
+      "0", 0, 8000, 2)));
+    size.appendChild(field("高（0=自适应）", numberInput(element.height,
+      function (v) { element.height = Number(v || 0); changed({ inspector: false }); renderHandles(); },
+      "0", 0, 8000, 2)));
+    layout.appendChild(size);
+    layout.appendChild(field("整体缩放", sliderRow(element.scale || 1, 0.2, 3, 0.01,
+      function (v) { return Math.round(v * 100) + "%"; },
+      function (v) { element.scale = v; changed({ inspector: false }); renderHandles(); })));
+    layout.appendChild(field("不透明度", sliderRow(element.opacity === undefined ? 1 : element.opacity,
+      0, 1, 0.01, function (v) { return Math.round(v * 100) + "%"; },
+      function (v) { element.opacity = v; changed({ inspector: false }); })));
+    var sceneSeg = el("div", "ed-seg");
+    SCENES.forEach(function (pair) {
+      var on = element.scenes && element.scenes.indexOf(pair[0]) >= 0;
+      var button = el("button", "", pair[1]);
+      button.type = "button";
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+      button.addEventListener("click", function () {
+        var scenes = element.scenes ? element.scenes.slice() : [];
+        var at = scenes.indexOf(pair[0]);
+        if (at >= 0) scenes.splice(at, 1); else scenes.push(pair[0]);
+        element.scenes = scenes;
+        changed();
+      });
+      sceneSeg.appendChild(button);
+    });
+    layout.appendChild(field("出现场景（都不选 = 全选）", sceneSeg));
+    host.appendChild(layout);
+
+    // ---- 样式 ----
+    var style = el("div", "ed-sec");
+    style.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "样式覆盖"));
+    style.appendChild(el("p", "ed-hint",
+      "留空表示继承主题。「未设置」和「设成主题同色」是两回事：只有保持这个区别，" +
+      "改一次主题，元素才会跟着一起变，而不是被钉死在旧颜色上。"));
+    [["accent", "强调色"], ["panel", "面板色"], ["ink", "文字色"]].forEach(function (pair) {
+      var row = el("div", "ed-color-row");
+      var input = el("input", "ed-color");
+      input.type = "color";
+      input.value = (element.style && element.style[pair[0]]) || "#ffc24b";
+      input.addEventListener("input", function () {
+        if (!element.style) element.style = {};
+        element.style[pair[0]] = input.value;
+        changed({ skipInspector: true });
+      });
+      row.appendChild(input);
+      var reset = el("button", "btn btn-sm", "继承主题");
+      reset.type = "button";
+      reset.addEventListener("click", function () {
+        if (element.style) delete element.style[pair[0]];
+        changed();
+      });
+      row.appendChild(reset);
+      row.appendChild(el("span", "ed-hint",
+        (element.style && element.style[pair[0]]) ? element.style[pair[0]] : "继承"));
+      style.appendChild(field(pair[1], row));
+    });
+    style.appendChild(field("字号倍率", sliderRow(
+      (element.style && element.style.fontScale) || 1, 0.5, 2.5, 0.05,
+      function (v) { return Math.round(v * 100) + "%"; },
+      function (v) {
+        if (!element.style) element.style = {};
+        element.style.fontScale = v;
+        changed({ skipInspector: true });
+      })));
+    style.appendChild(field("全大写", checkInput(element.style && element.style.uppercase,
+      "把数据文本转成大写", function (v) {
+        if (!element.style) element.style = {};
+        element.style.uppercase = v;
+        changed({ skipInspector: true });
+      })));
+    host.appendChild(style);
+
+    // ---- 动画 ----
+    var anim = el("div", "ed-sec");
+    anim.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "动画"));
+    if (!element.anim) element.anim = { enter: "fade", update: "pop", durationMs: 420, easing: "outCubic" };
+    anim.appendChild(field("入场方式", selectInput(element.anim.enter, ENTERS,
+      function (v) { element.anim.enter = v; changed(); })));
+    anim.appendChild(field("数据变化时", selectInput(element.anim.update, UPDATES,
+      function (v) { element.anim.update = v; changed(); })));
+    anim.appendChild(field("时长", sliderRow(element.anim.durationMs, 0, 2000, 10,
+      function (v) { return v + " ms"; },
+      function (v) { element.anim.durationMs = v; changed({ skipInspector: true }); })));
+    anim.appendChild(field("缓动", selectInput(element.anim.easing, EASINGS,
+      function (v) { element.anim.easing = v; changed(); })));
+    host.appendChild(anim);
   }
 
-  function fetchPresets() {
-    if (!originOk || typeof window.fetch !== "function") return;
-    window.fetch("/api/presets", { cache: "no-store" })
-      .then(function (res) { return res.ok ? res.json() : null; })
-      .then(function (data) {
-        if (!data || !Array.isArray(data.presets)) return;
-        presets = data;
-        renderPresets();
-      })
-      ["catch"](function () { renderPresets(); });
+  /** 拖拽时只刷新几何那几个输入框，不去重建整块面板 —— 否则拖一下焦点就飞了。 */
+  function renderInspectorGeometry() {
+    var element = findElement(selectedId);
+    if (!element) return;
+    var inputs = $("panelInspector").querySelectorAll(".ed-inline .ed-input");
+    if (inputs.length === 4) {
+      if (document.activeElement !== inputs[0]) inputs[0].value = String(element.x);
+      if (document.activeElement !== inputs[1]) inputs[1].value = String(element.y);
+      if (document.activeElement !== inputs[2]) inputs[2].value = String(element.width);
+      if (document.activeElement !== inputs[3]) inputs[3].value = String(element.height);
+    }
   }
 
-  function fetchState() {
-    if (!originOk || typeof window.fetch !== "function") return;
-    window.fetch("/api/state", { cache: "no-store" })
-      .then(function (res) { return res.ok ? res.json() : null; })
-      .then(function (data) {
-        if (data) {
-          raw = data;
-          updateStatus();
+  // ==========================================================================
+  // 9. 渲染 —— 主题
+  // ==========================================================================
+
+  function renderTheme() {
+    var host = $("panelTheme");
+    clear(host);
+    if (!doc.theme) doc.theme = {};
+    var sec = el("div", "ed-sec");
+    sec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "全局配色"));
+    sec.appendChild(el("p", "ed-hint",
+      "这是整个包装的基因层。元素自己的样式覆盖留空时继承这里，所以改一次主题，所有没被钉死的元素一起变。"));
+
+    THEME_FIELDS.forEach(function (fieldSpec) {
+      if (fieldSpec.kind === "color") {
+        var row = el("div", "ed-color-row");
+        var picker = el("input", "ed-color");
+        picker.type = "color";
+        picker.value = normaliseColor(doc.theme[fieldSpec.key]);
+        picker.addEventListener("input", function () {
+          doc.theme[fieldSpec.key] = picker.value;
+          text.value = picker.value;
+          changed({ theme: false, skipInspector: true });
+        });
+        var text = el("input", "ed-input");
+        text.value = doc.theme[fieldSpec.key] || "";
+        text.addEventListener("input", function () {
+          doc.theme[fieldSpec.key] = text.value;
+          picker.value = normaliseColor(text.value);
+          changed({ theme: false, skipInspector: true });
+        });
+        row.appendChild(picker);
+        row.appendChild(text);
+        sec.appendChild(field(fieldSpec.label, row));
+      } else {
+        sec.appendChild(field(fieldSpec.label, textInput(doc.theme[fieldSpec.key],
+          function (v) { doc.theme[fieldSpec.key] = v; changed({ theme: false, skipInspector: true }); },
+          fieldSpec.placeholder)));
+      }
+    });
+
+    var safeSec = el("div", "ed-sec");
+    safeSec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "画布与安全区"));
+    safeSec.appendChild(field("画布宽", numberInput(doc.canvas.width,
+      function (v) { doc.canvas.width = Number(v || 1920); changed({ theme: false }); renderHandles(); },
+      "1920", 320, 7680, 1)));
+    safeSec.appendChild(field("画布高", numberInput(doc.canvas.height,
+      function (v) { doc.canvas.height = Number(v || 1080); changed({ theme: false }); renderHandles(); },
+      "1080", 240, 4320, 1)));
+    safeSec.appendChild(field("安全区内缩 X", numberInput(doc.safe ? doc.safe.x : 40,
+      function (v) { if (!doc.safe) doc.safe = {}; doc.safe.x = Number(v || 0); changed({ theme: false }); },
+      "40", 0, 300, 1)));
+    safeSec.appendChild(field("安全区内缩 Y", numberInput(doc.safe ? doc.safe.y : 45,
+      function (v) { if (!doc.safe) doc.safe = {}; doc.safe.y = Number(v || 0); changed({ theme: false }); },
+      "45", 0, 300, 1)));
+    host.appendChild(sec);
+    host.appendChild(safeSec);
+    renderGuides();
+  }
+
+  /* <input type="color"> 只吃 #RRGGBB，所以带 alpha 的主题色要截断给它，
+     但文档里保留完整值 —— 否则一次取色就把面板的透明度抹掉了。 */
+  function normaliseColor(value) {
+    var m = /^#([0-9a-f]{6})/i.exec(String(value || ""));
+    return m ? "#" + m[1] : "#ffc24b";
+  }
+
+  // ==========================================================================
+  // 10. 渲染 —— 数据预览
+  // ==========================================================================
+
+  function renderData() {
+    var host = $("panelData");
+    clear(host);
+    if (!doc) return;
+
+    var hint = el("p", "ed-hint",
+      "只在本机造一份假数据，用来在没有比赛的时候排版面：长队名、三位数比分、停住的计时器。" +
+      "不影响别人，也不发给服务端。");
+    host.appendChild(hint);
+
+    var scoreSec = el("div", "ed-sec");
+    scoreSec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "比分"));
+    var scoreRow = el("div", "ed-row");
+    [0, 1].forEach(function (slot) {
+      var minus = el("button", "btn", "−1");
+      minus.type = "button";
+      minus.addEventListener("click", function () { previewScore(slot, -1); });
+      var plus = el("button", "btn", "+1");
+      plus.type = "button";
+      plus.addEventListener("click", function () { previewScore(slot, 1); });
+      scoreRow.appendChild(minus);
+      scoreRow.appendChild(plus);
+    });
+    scoreSec.appendChild(scoreRow);
+    scoreSec.appendChild(el("p", "ed-hint", "两列分别是主队和客队。"));
+    host.appendChild(scoreSec);
+
+    var sceneSec = el("div", "ed-sec");
+    sceneSec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "场景"));
+    var seg = el("div", "ed-seg");
+    SCENES.forEach(function (pair) {
+      var on = liveState && liveState.scene === pair[0];
+      var button = el("button", "", pair[1]);
+      button.type = "button";
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+      button.addEventListener("click", function () {
+        postPreview({ scene: pair[0] });
+        log("预览场景切到 " + pair[0], "");
+      });
+      seg.appendChild(button);
+    });
+    sceneSec.appendChild(seg);
+    sceneSec.appendChild(el("p", "ed-hint",
+      "局内（compact）是贴边数据包；全场（full）允许中场大卡压到画面中央。"));
+    host.appendChild(sceneSec);
+
+    var overlaySec = el("div", "ed-sec");
+    overlaySec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "开关"));
+    var row = el("div", "ed-row");
+    var announceBtn = el("button", "btn", "公告");
+    announceBtn.type = "button";
+    announceBtn.addEventListener("click", function () {
+      postPreview({ announcement: { title: "ROUND 3", subtitle: "决胜局", visible: true } });
+    });
+    var lowerBtn = el("button", "btn", "选手条");
+    lowerBtn.type = "button";
+    lowerBtn.addEventListener("click", function () {
+      var side = liveState && liveState.sides && liveState.sides[0] ? liveState.sides[0].id : "home";
+      postPreview({ lowerThird: { visible: true, side: side } });
+    });
+    row.appendChild(announceBtn);
+    row.appendChild(lowerBtn);
+    overlaySec.appendChild(row);
+
+    var row2 = el("div", "ed-row");
+    var clockBtn = el("button", "btn", "计时开/停");
+    clockBtn.type = "button";
+    clockBtn.addEventListener("click", function () {
+      var running = !(liveState && liveState.clock && liveState.clock.running);
+      postPreview({ clock: { running: running, label: "比赛计时", value: "24:18" } });
+    });
+    var tickerBtn = el("button", "btn", "信息条");
+    tickerBtn.type = "button";
+    tickerBtn.addEventListener("click", function () {
+      postPreview({ ticker: ["本地预览：这是一条足够长的信息，用来检查滚动与截断",
+        "第二条 · 图形由服务端统一控制"] });
+    });
+    row2.appendChild(clockBtn);
+    row2.appendChild(tickerBtn);
+    overlaySec.appendChild(row2);
+
+    [["announcement", "公告"], ["lowerThird", "选手条"]].forEach(function (pair) {
+      var off = el("button", "btn", "关掉" + pair[1]);
+      off.type = "button";
+      off.addEventListener("click", function () {
+        var patch = {};
+        patch[pair[0]] = { visible: false };
+        postPreview(patch);
+      });
+      overlaySec.appendChild(off);
+    });
+    host.appendChild(overlaySec);
+
+    var clearSec = el("div", "ed-sec");
+    var clearBtn = el("button", "btn btn-block", "清除全部预览数据");
+    clearBtn.type = "button";
+    clearBtn.addEventListener("click", function () {
+      fetch("/api/preview", { method: "DELETE" }).then(function () {
+        log("已清除本机预览数据", "ok");
+      })["catch"](function (e) { log("清除失败：" + e.message, "bad"); });
+    });
+    clearSec.appendChild(clearBtn);
+    host.appendChild(clearSec);
+
+    var boardsSec = el("div", "ed-sec");
+    boardsSec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "当前数据源"));
+    var boards = (liveState && liveState.boards) || [];
+    if (!boards.length) {
+      boardsSec.appendChild(el("p", "ed-hint", "还没有任何数据看板数据。看板没数据时会整块收掉，不会留空框。"));
+    } else {
+      boards.forEach(function (board) {
+        var item = el("div", "ed-preview-item");
+        item.appendChild(el("div", "ed-preview-title",
+          board.key + " · " + board.rows.length + " 行" + (board.unit ? " · 单位 " + board.unit : "")));
+        // 每个看板元素都靠 key 找数据源，所以在这里把 key 直接列出来 ——
+        // 导播不用去问"我这块板该填什么"，照抄就行。
+        var chips = el("div", "ed-kv");
+        var keyChip = el("span", "ed-kv-row");
+        keyChip.appendChild(el("span", "ed-kv-key", "board ="));
+        keyChip.appendChild(el("span", "ed-kv-val", board.key));
+        chips.appendChild(keyChip);
+        if (board.title) {
+          var titleChip = el("span", "ed-kv-row");
+          titleChip.appendChild(el("span", "ed-kv-key", "title"));
+          titleChip.appendChild(el("span", "ed-kv-val", board.title));
+          chips.appendChild(titleChip);
         }
-      })
-      ["catch"](function () {});
+        item.appendChild(chips);
+        var sample = board.rows.slice(0, 3).map(function (row) {
+          return (row.label || row.key) + " " + (row.display || row.value);
+        }).join(" · ");
+        if (sample) item.appendChild(el("p", "ed-hint", sample));
+        boardsSec.appendChild(item);
+      });
+    }
+    host.appendChild(boardsSec);
   }
 
-  // ---- local preview -----------------------------------------------------
+  function previewScore(slot, delta) {
+    var sides = (liveState && liveState.sides) || [];
+    if (!sides[slot]) return;
+    var patch = { sides: [] };
+    sides.forEach(function (side, index) {
+      patch.sides.push({ id: side.id, score: Math.max(0, side.score + (index === slot ? delta : 0)) });
+    });
+    postPreview(patch);
+  }
 
-  /* These never reach the server. They exist so a package can be laid out
-     against representative numbers — a long team name, a four-digit score, a
-     stopped clock — without waiting for a real match to supply them. */
-
-  function preview(patch, label) {
-    if (!originOk) { note("请通过 http 打开本页", "bad"); return; }
-    window.fetch("/api/preview", {
+  function postPreview(patch) {
+    fetch("/api/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch)
     }).then(function (res) {
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      note("预览数据 · " + label, "ok");
-    })["catch"](function (err) {
-      note("预览失败 · " + (err && err.message), "bad");
+      if (!res.ok) log("预览数据被拒（HTTP " + res.status + "）", "warn");
+    })["catch"](function (e) { log("预览数据发送失败：" + e.message, "bad"); });
+  }
+
+  // ==========================================================================
+  // 11. 渲染 —— 预设画廊
+  // ==========================================================================
+
+  var PRESET_META = {
+    arena: { tag: "电竞", desc: "深色数据包。13 个元素，强调色青绿，贴边密集数据看板，适合局内长时间上播。" },
+    olympia: { tag: "奥运", desc: "亮色克制包。浅米面板 + 金蓝，13 个元素，信息层级重，适合赛前与颁奖。" },
+    clean: { tag: "极简", desc: "最小遮挡。7 个元素，只有角标、计时和两条贴边数据，画面几乎全留给比赛。" }
+  };
+
+  function renderPresets() {
+    var host = $("panelPreset");
+    clear(host);
+    if (!presets) return;
+    var sec = el("div", "ed-sec");
+    sec.appendChild(el("div", "ed-sec-head")).appendChild(el("h2", "ed-sec-title", "版面包预设"));
+    sec.appendChild(el("p", "ed-hint",
+      "切换预设会替换整个版面，未保存的改动会丢失；随后立即存盘并广播给所有客户端与包装页。"));
+
+    (presets.presets || []).forEach(function (name) {
+      var meta = PRESET_META[name] || { tag: "", desc: "" };
+      var card = el("button", "ed-preset" + (name === presets.current ? " is-current" : ""));
+      card.type = "button";
+      var top = el("div", "ed-preset-top");
+      top.appendChild(el("span", "ed-preset-name", presets.labels[name] || name));
+      top.appendChild(el("span", "ed-preset-tag", name === presets.current ? "使用中" : (meta.tag || name)));
+      card.appendChild(top);
+      card.appendChild(el("div", "ed-preset-desc", meta.desc || ""));
+      var swatches = el("div", "ed-swatches");
+      swatches.setAttribute("data-preset", name);
+      card.appendChild(swatches);
+      card.addEventListener("click", function () { switchPreset(name); });
+      sec.appendChild(card);
+    });
+    host.appendChild(sec);
+
+    // 每个预设旁边放一排色块，一眼看出这套包是什么调子。
+    //
+    // 颜色必须来自 /api/presets 一起带回来的 themes，绝不能用
+    // GET /api/layout?preset= 去"取一下看看"：那个请求在服务端是一次写操作，
+    // 会把正在上播的整套包换掉。画一排色块不值得让直播切一次场景。
+    (presets.presets || []).forEach(function (name) {
+      var theme = presets.themes && presets.themes[name];
+      if (!theme) return;
+      var host2 = host.querySelector('.ed-swatches[data-preset="' + name + '"]');
+      if (!host2) return;
+      ["accent", "panelTop", "ink", "home", "away"].forEach(function (key) {
+        var chip = el("span", "ed-swatch");
+        chip.style.background = normaliseColor(theme[key]);
+        chip.title = key + "  " + (theme[key] || "");
+        host2.appendChild(chip);
+      });
     });
   }
 
-  function clearPreview() {
-    window.fetch("/api/preview", { method: "DELETE" })
+  function switchPreset(name) {
+    if (dirtyFlag && !window.confirm("当前有未保存的改动，切换预设会丢弃它们。继续？")) return;
+    fetch("/api/layout?preset=" + encodeURIComponent(name), { cache: "no-store" })
       .then(function (res) {
         if (!res.ok) throw new Error("HTTP " + res.status);
-        note("已清除预览数据", "ok");
-      })["catch"](function (err) {
-        note("清除预览失败 · " + (err && err.message), "bad");
+        return res.json();
+      })
+      .then(function (loaded) {
+        adopt(loaded);
+        presets.current = name;
+        log("已切换到预设 " + (presets.labels[name] || name), "ok");
+        renderPresets();
+        renderAll();
+      })
+      ["catch"](function (e) {
+        log("切换预设失败：" + e.message, "bad");
       });
   }
 
-  function currentSides() {
-    return raw && Array.isArray(raw.sides) ? raw.sides : [];
+  function adopt(loaded) {
+    doc = loaded;
+    if (!doc.elements) doc.elements = [];
+    if (!doc.options) { /* 文档级没有 options，元素级才有 */ }
+    savedJson = serialise();
+    dirtyFlag = false;
+    selectedId = doc.elements.length ? doc.elements[0].id : "";
+    pushDraft();
   }
 
-  function bumpSide(index) {
-    var sides = currentSides().map(function (side) { return { id: side.id, score: toNum(side.score, 0) }; });
-    while (sides.length <= index) sides.push({ id: index === 0 ? "home" : "away", score: 0 });
-    sides[index].score += 1;
-    preview({ sides: sides }, (index === 0 ? "主队" : "客队") + " +1");
+  // ==========================================================================
+  // 12. JSON 面板
+  // ==========================================================================
+
+  function renderJsonPane() {
+    var area = $("json");
+    if (!doc || document.activeElement === area) return;
+    area.value = serialise();
   }
 
-  function toggleAnnouncement() {
-    var ann = isObject(raw && raw.announcement) ? raw.announcement : {};
-    var next = !(ann.visible === true);
-    var title = ann.title;
-    if (next && !title) {
-      var event = isObject(raw && raw.event) ? raw.event : {};
-      title = event.stage || event.name || "ROUND 3";
-    }
-    preview({ announcement: { visible: next, title: next ? title : ann.title, subtitle: ann.subtitle || "" } },
-      next ? "显示公告" : "隐藏公告");
+  // ==========================================================================
+  // 13. 参考线与缩放
+  // ==========================================================================
+
+  var guides = { grid: false, third: false, window: true, safe: false, labels: true };
+
+  function guideOn(name) { return guides[name] === true; }
+
+  function renderGuides() {
+    var W = (doc && doc.canvas ? doc.canvas.width : 1920) * scale;
+    var H = (doc && doc.canvas ? doc.canvas.height : 1080) * scale;
+    var safe = (doc && doc.safe) || { x: 40, y: 45 };
+    var windowRect = { x: W * 0.20, y: H * 0.16, w: W * 0.60, h: H * 0.68 };
+
+    setGuide("guideGrid", guides.grid, { x: 0, y: 0, w: W, h: H });
+    setGuide("guideThird", guides.third, { x: W / 3, y: 0, w: W / 3, h: H });
+    setGuide("guideWindow", guides.window, windowRect);
+    setGuide("guideSafe", guides.safe,
+      { x: safe.x * scale, y: safe.y * scale, w: W - safe.x * scale * 2, h: H - safe.y * scale * 2 });
+
+    document.querySelectorAll(".ed-toggle").forEach(function (button) {
+      button.setAttribute("aria-pressed", guideOn(button.getAttribute("data-guide")) ? "true" : "false");
+    });
   }
 
-  function toggleTicker() {
-    var current = raw && Array.isArray(raw.ticker) ? raw.ticker : [];
-    preview({
-      ticker: current.length
-        ? []
-        : ["这是一条预览用的跑马灯消息", "长消息会滚动 不会挤掉旁边的元素", "第三段用来检查循环接缝"]
-    }, current.length ? "清空跑马灯" : "添加跑马灯");
-  }
-
-  function toggleClock() {
-    var clock = isObject(raw && raw.clock) ? raw.clock : {};
-    var running = !(clock.running === true);
-    preview({
-      clock: {
-        label: clock.label || "比赛计时",
-        value: clock.value || "00:00",
-        running: running
-      }
-    }, running ? "计时开始" : "计时停止");
-  }
-
-  function toggleLower() {
-    var lower = isObject(raw && raw.lowerThird) ? raw.lowerThird : {};
-    var sides = currentSides();
-    var next = !(lower.visible === true);
-    preview({
-      lowerThird: {
-        visible: next,
-        side: lower.side || (sides[0] ? sides[0].id : "home")
-      }
-    }, next ? "显示选手条" : "隐藏选手条");
-  }
-
-  function setScene(scene) {
-    preview({ scene: scene }, "场景 " + scene);
-    var buttons = ui.sceneRow.getElementsByTagName("button");
-    for (var i = 0; i < buttons.length; i++) {
-      var active = buttons[i].getAttribute("data-scene") === scene;
-      buttons[i].classList.toggle("is-active", active);
-      buttons[i].setAttribute("aria-pressed", active ? "true" : "false");
+  function setGuide(id, on, rect) {
+    var node = $(id);
+    node.classList.toggle("is-on", !!on);
+    node.style.left = rect.x + "px";
+    node.style.top = rect.y + "px";
+    node.style.width = rect.w + "px";
+    node.style.height = rect.h + "px";
+    if (id === "guideGrid") {
+      node.style.backgroundSize = (80 * scale) + "px " + (90 * scale) + "px";
     }
   }
 
-  // ---- the stream --------------------------------------------------------
+  function fitCanvas() {
+    var stage = $("stage");
+    var pad = 40;
+    var availW = stage.clientWidth - pad;
+    var availH = stage.clientHeight - pad;
+    var W = doc && doc.canvas ? doc.canvas.width : 1920;
+    var H = doc && doc.canvas ? doc.canvas.height : 1080;
+    if (zoomMode === "fit") {
+      scale = Math.max(0.05, Math.min(availW / W, availH / H));
+    }
+    var canvas = $("canvas");
+    canvas.style.width = (W * scale) + "px";
+    canvas.style.height = (H * scale) + "px";
+    var scaler = $("scaler");
+    scaler.style.transform = "scale(" + scale + ")";
+    scaler.style.width = W + "px";
+    scaler.style.height = H + "px";
+    $("chipZoom").querySelector("span").textContent = Math.round(scale * 100) + "%";
+    renderGuides();
+    renderHandles();
+    renderBudget();
+  }
+
+  // ==========================================================================
+  // 14. 传输 —— 版面、预设、状态流
+  // ==========================================================================
+
+  var retryTimer = 0;
+  var attempt = 0;
+  var sseOpen = false;
+
+  function setChip(id, text, kind) {
+    var chip = $(id);
+    chip.querySelector("span").textContent = text;
+    chip.classList.remove("is-on", "is-warn", "is-bad");
+    if (kind) chip.classList.add("is-" + kind);
+  }
+
+  function loadPresets() {
+    return fetch("/api/presets", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data) presets = data;
+      })
+      ["catch"](function () {});
+  }
+
+  function loadLayout() {
+    return fetch("/api/layout", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (loaded) {
+        adopt(loaded);
+        log("版面已载入：" + (doc.name || "(未命名)") + " · " + doc.elements.length + " 个元素", "ok");
+        renderAll();
+      });
+  }
+
+  function save() {
+    if (!doc) return;
+    $("saveLabel").textContent = "正在保存…";
+    fetch("/api/layout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(doc)
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        if (!res.ok) throw new Error("HTTP " + res.status + " " + text.slice(0, 160));
+        return text;
+      });
+    }).then(function (text) {
+      var stored = null;
+      try { stored = JSON.parse(text); } catch (e) { /* 服务端可能回非 JSON */ }
+      if (stored && stored.elements) {
+        // 服务端会规整文档（补默认值、去重 id、丢掉未知类型）。把规整后的
+        // 那份认回来，页面显示的才是真正存进去的东西。
+        doc = stored;
+        pushDraft();
+        renderAll();
+      }
+      savedJson = serialise();
+      dirtyFlag = false;
+      $("saveLabel").textContent = "保存并广播";
+      log("已保存并广播给所有客户端与包装页", "ok");
+    })["catch"](function (e) {
+      $("saveLabel").textContent = "保存并广播 *";
+      log("保存失败：" + e.message, "bad");
+    });
+  }
+
+  function openStream() {
+    var source;
+    try { source = new EventSource("/events"); }
+    catch (e) { scheduleRetry(); return; }
+
+    source.onopen = function () {
+      sseOpen = true;
+      attempt = 0;
+      setChip("chipLink", "已连接", "on");
+      renderGuides();
+    };
+
+    source.addEventListener("layout", function (event) {
+      var incoming;
+      try { incoming = JSON.parse(event.data); } catch (e) { return; }
+      if (!incoming || !incoming.elements) return;
+      // 未保存的改动不会被流冲掉。另一个导播保存一次，不该悄悄丢掉半小时的
+      // 拖拽；冲突报出来，留给人来定。
+      if (dirtyFlag) {
+        log("服务端版面已更新，但本机有未保存的改动，未覆盖。点「保存并广播」会用本机版本覆盖。" , "warn");
+        return;
+      }
+      doc = incoming;
+      savedJson = serialise();
+      if (!findElement(selectedId)) selectedId = doc.elements.length ? doc.elements[0].id : "";
+      renderAll();
+      if (localEdits) log("版面被其他导播更新，已同步", "");
+      localEdits = false;
+    });
+
+    source.onmessage = function (event) {
+      var parsed;
+      try { parsed = JSON.parse(event.data); } catch (e) { return; }
+      if (!parsed || typeof parsed !== "object") return;
+      liveState = parsed;
+      updateDataChips();
+      renderBudget();
+      renderHandles();
+      renderData();
+    };
+
+    source.onerror = function () {
+      if (source.readyState === EventSource.CLOSED || true) {
+        try { source.close(); } catch (e) { /* 已经没了 */ }
+      }
+      sseOpen = false;
+      attempt++;
+      setChip("chipLink", "已断线 · 重连 #" + attempt, "bad");
+      scheduleRetry();
+    };
+  }
 
   function scheduleRetry() {
     var delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.pow(1.7, Math.min(attempt - 1, 8)));
@@ -1497,395 +1978,279 @@
     retryTimer = setTimeout(openStream, delay);
   }
 
-  function dropStream(reason) {
-    if (sse) {
-      try { sse.close(); } catch (e) { /* already gone */ }
-      sse = null;
-    }
-    sseOpen = false;
-    attempt++;
-    updateStatus();
-    note(reason + "，重连 #" + attempt, "bad");
-    scheduleRetry();
-  }
-
-  function openStream() {
-    if (!originOk) return;
-    if (sse) {
-      try { sse.close(); } catch (e) { /* already gone */ }
-      sse = null;
-    }
-
-    var src;
-    try {
-      src = new EventSource("/events");
-    } catch (e) {
-      dropStream("无法建立 SSE 连接");
-      return;
-    }
-    sse = src;
-
-    src.onopen = function () {
-      if (sse !== src) return;
-      sseOpen = true;
-      attempt = 0;
-      note("SSE 已连接", "ok");
-      updateStatus();
-      fetchState();
-      fetchLayout();
-    };
-
-    src.onmessage = function (ev) {
-      if (sse !== src) return;
-      sseOpen = true;
-      handleState(ev && ev.data);
-      updateStatus();
-    };
-
-    src.addEventListener("layout", function (ev) {
-      if (sse !== src) return;
-      handleRemoteLayout(ev && ev.data);
-    });
-
-    src.onerror = function () {
-      if (sse !== src) return;   // EventSource retries on its own; we do not
-      dropStream("SSE 断开");
-    };
-  }
-
-  function handleState(text) {
-    if (typeof text !== "string") return;
-    var trimmed = text.trim();
-    if (!trimmed || trimmed.charAt(0) === ":") return;
-    try {
-      var parsed = JSON.parse(trimmed);
-      if (isObject(parsed)) {
-        raw = parsed;
-        updateStatus();
-        renderScope();
-      }
-    } catch (e) {
-      note("收到无法解析的状态，已忽略", "bad");
+  function updateDataChips() {
+    var s = liveState || {};
+    setChip("chipData", s.preview ? "本地预览数据" : "赛事数据已连接",
+      s.preview ? "warn" : "on");
+    scope = { scope: s.layoutScope || "local", author: s.layoutAuthor || "", preset: s.layoutPreset || "" };
+    var serverWide = scope.scope === "server";
+    setChip("chipScope", serverWide ? "全服版面生效中" : "本机版面", serverWide ? "warn" : "");
+    var note = $("scopeNote");
+    note.classList.toggle("is-hidden", !serverWide);
+    if (serverWide) {
+      note.innerHTML = "当前生效的是<b>全服版面</b>" +
+        (scope.author ? "（由 " + esc(scope.author) + " 设定）" : "") +
+        "。你在这里做的改动只影响本机，暂时不会出现在画面上。要换回本机版面，" +
+        "让管理员执行 <b>/stevehud layout clear</b>。";
     }
   }
 
-  /**
-   * Whose package every screen is drawing.
-   *
-   * <p>Two scopes, and the difference decides whether anything done on this page is
-   * visible at all:
-   *
-   *   local   this machine's file. Drives this machine's OBS overlay and this
-   *           machine's HUD, changes nothing for anyone else, needs no permission.
-   *   server  an operator's package, which every client draws instead of its own.
-   *
-   * The editor always edits the local document, which is the point — the operator's
-   * own packaging work has to stay editable during a match. So when a server package
-   * is on air the banner has to say that plainly, or the tool looks broken while it is
-   * in fact working correctly.
-   */
-  function renderScope() {
-    var scope = raw && raw.layoutScope === "server" ? "server" : "local";
-    var author = raw && raw.layoutAuthor ? raw.layoutAuthor : "";
-    var onAir = raw && raw.layoutName ? raw.layoutName : "";
+  // ==========================================================================
+  // 15. 整体渲染
+  // ==========================================================================
 
-    setStatus(ui.scopeStatus, ui.scopeStatusText, scope === "server" ? "warn" : true,
-      scope === "server" ? "全服版面" : "本机版面");
-
-    if (scope !== "server") {
-      ui.scopeNote.classList.add("is-hidden");
-      return;
-    }
-    ui.scopeNote.textContent =
-      "当前画面上生效的是全服版面（" + (onAir || "未命名") + "，由 " + (author || "管理员") +
-      " 设定），所有客户端与包装页都在画它。" +
-      "这一页编辑的是本机版面：只影响你这台机器，不影响别人，也不需要权限；" +
-      "但全服版面生效期间，你的改动不会显示，直到管理员执行 /stevehud layout clear。";
-    ui.scopeNote.classList.remove("is-hidden");
-  }
-
-  function handleRemoteLayout(text) {
-    if (typeof text !== "string") return;
-    var trimmed = text.trim();
-    if (!trimmed) return;
-    var parsed;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (e) {
-      note("收到无法解析的版面，已忽略", "bad");
-      return;
-    }
-    if (!isObject(parsed) || !isObject(parsed.canvas)) return;
-
-    if (dirty && !saveInFlight) {
-      // See fetchLayout: reported rather than applied.
-      note("服务端版面被改动了，但本页有未保存改动，未覆盖", "bad");
-      return;
-    }
-    // Our own save echoes back here too. Adopting it is how the editor ends up
-    // showing exactly what was stored, normalisation included.
-    adopt(parsed, "");
-    saved = clone(parsed);
-    dirty = false;
-    if (ui.layoutStatusText) {
-      ui.layoutStatusText.textContent = (parsed.name || "未命名") + " · " + parsed.elements.length + " 个元素";
-    }
-    note("版面已同步 · " + (parsed.name || ""));
-  }
-
-  // ---- canvas sizing -----------------------------------------------------
-
-  function resizeCanvas() {
-    var wrap = ui.canvasWrap;
-    var canvas = ui.canvas;
-    if (!wrap || !canvas || !layout) return;
-    var availableW = wrap.clientWidth - 32;
-    var availableH = wrap.clientHeight - 32;
-    if (availableW <= 0 || availableH <= 0) return;
-    if (fitZoom) {
-      zoom = clamp(Math.min(availableW / layout.canvas.width, availableH / layout.canvas.height),
-        0.05, 1);
-    }
-    // The outer box is the size it looks; the inner one holds the design surface
-    // and is the only thing scaled. The handles then work in plain editor pixels
-    // and never have to divide by a zoom factor.
-    canvas.style.width = (layout.canvas.width * zoom) + "px";
-    canvas.style.height = (layout.canvas.height * zoom) + "px";
-    ui.scaler.style.transform = "scale(" + zoom + ")";
-    setZoomStatus();
-    renderHandles();
-  }
-
-  // ---- boot --------------------------------------------------------------
-
-  function collect() {
-    ui.pageStatus = document.getElementById("pageStatus");
-    ui.pageStatusText = document.getElementById("pageStatusText");
-    ui.dataStatus = document.getElementById("dataStatus");
-    ui.dataStatusText = document.getElementById("dataStatusText");
-    ui.saveStatus = document.getElementById("saveStatus");
-    ui.saveStatusText = document.getElementById("saveStatusText");
-    ui.zoomStatus = document.getElementById("zoomStatus");
-    ui.zoomStatusText = document.getElementById("zoomStatusText");
-    ui.layoutStatus = document.getElementById("layoutStatus");
-    ui.layoutStatusText = document.getElementById("layoutStatusText");
-    ui.scopeStatus = document.getElementById("scopeStatus");
-    ui.scopeStatusText = document.getElementById("scopeStatusText");
-    ui.scopeNote = document.getElementById("scopeNote");
-    ui.presetRow = document.getElementById("presetRow");
-    ui.layerList = document.getElementById("layerList");
-    ui.inspector = document.getElementById("inspector");
-    ui.theme = document.getElementById("theme");
-    ui.json = document.getElementById("json");
-    ui.log = document.getElementById("log");
-    ui.sceneRow = document.getElementById("sceneRow");
-    ui.canvas = document.getElementById("canvas");
-    ui.canvasWrap = document.getElementById("canvasWrap");
-    ui.scaler = document.getElementById("scaler");
-    ui.handles = document.getElementById("handles");
-    ui.frame = document.getElementById("overlayFrame");
-    ui.btnSave = document.getElementById("btnSave");
-    ui.btnSaveLabel = document.getElementById("btnSaveLabel");
-    ui.btnRevert = document.getElementById("btnRevert");
-    ui.btnDelete = document.getElementById("btnDelete");
-    ui.addType = document.getElementById("addType");
-  }
-
-  function boot() {
-    collect();
-
-    on(ui.btnSave, "click", save);
-    on(ui.btnRevert, "click", revert);
-    on(document.getElementById("btnAddText"), "click", function () {
-      addElement(ui.addType.value);
-    });
-    on(ui.btnDelete, "click", removeSelected);
-    on(document.getElementById("btnFit"), "click", function () {
-      fitZoom = true;
-      resizeCanvas();
-    });
-    on(document.getElementById("btnFormat"), "click", function () {
-      try {
-        ui.json.value = pretty(JSON.parse(ui.json.value));
-        ui.json.classList.remove("is-bad");
-      } catch (e) {
-        ui.json.classList.add("is-bad");
-        note("JSON 无法解析", "bad");
-      }
-    });
-    on(document.getElementById("btnApplyJson"), "click", function () {
-      var parsed;
-      try {
-        parsed = JSON.parse(ui.json.value);
-      } catch (e) {
-        ui.json.classList.add("is-bad");
-        note("JSON 无法解析，未应用", "bad");
-        return;
-      }
-      ui.json.classList.remove("is-bad");
-      if (!isObject(parsed) || !isObject(parsed.canvas)) {
-        ui.json.classList.add("is-bad");
-        note("这段 JSON 不像版面文档", "bad");
-        return;
-      }
-      layout = parsed;
-      if (!Array.isArray(layout.elements)) layout.elements = [];
-      dirty = true;
-      applyEditorTheme(layout.theme);
-      applyToFrame();
-      renderAll();
-      note("已从 JSON 应用");
-    });
-    on(ui.json, "input", function () {
-      var ok = true;
-      try { JSON.parse(ui.json.value); } catch (e) { ok = false; }
-      ui.json.classList.toggle("is-bad", ui.json.value.trim() !== "" && !ok);
-    });
-    on(document.getElementById("btnExport"), "click", function () {
-      var blob = new Blob([pretty(stripInternal(layout))], { type: "application/json" });
-      var a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "stevehud-layout.json";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-      note("已导出 JSON");
-    });
-    on(document.getElementById("btnImport"), "click", function () {
-      document.getElementById("importFile").click();
-    });
-    on(document.getElementById("importFile"), "change", function (ev) {
-      var file = ev.target.files && ev.target.files[0];
-      if (!file) return;
-      var reader = new FileReader();
-      reader.onload = function () {
-        var parsed;
-        try {
-          parsed = JSON.parse(String(reader.result));
-        } catch (e) {
-          note("文件不是合法 JSON", "bad");
-          return;
-        }
-        if (!isObject(parsed) || !isObject(parsed.canvas)) {
-          note("文件不像版面文档", "bad");
-          return;
-        }
-        layout = parsed;
-        if (!Array.isArray(layout.elements)) layout.elements = [];
-        dirty = true;
-        applyEditorTheme(layout.theme);
-        applyToFrame();
-        renderAll();
-        note("已导入 · " + file.name, "ok");
-      };
-      reader.readAsText(file);
-      ev.target.value = "";
-    });
-
-    // Local preview controls.
-    on(document.getElementById("btnHome"), "click", function () { bumpSide(0); });
-    on(document.getElementById("btnAway"), "click", function () { bumpSide(1); });
-    on(document.getElementById("btnAnnounce"), "click", toggleAnnouncement);
-    on(document.getElementById("btnTicker"), "click", toggleTicker);
-    on(document.getElementById("btnClock"), "click", toggleClock);
-    on(document.getElementById("btnLower"), "click", toggleLower);
-    on(document.getElementById("btnClearPreview"), "click", clearPreview);
-    on(ui.sceneRow, "click", function (ev) {
-      var target = ev.target && ev.target.closest ? ev.target.closest("button[data-scene]") : null;
-      if (target) setScene(target.getAttribute("data-scene"));
-    });
-
-    // Keyboard: the shortcuts an operator reaches for while looking at the
-    // canvas rather than at the inspector.
-    on(document, "keydown", function (ev) {
-      var tag = ev.target && ev.target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (ev.key === "Escape") {
-        selectedId = null;
-        renderLayers();
-        renderInspector();
-        renderHandles();
-        updateStatus();
-        return;
-      }
-      var element = selected();
-      if (!element) return;
-      var step = ev.shiftKey ? 10 : 1;
-      var anchor = element.anchor || "topLeft";
-      var right = anchor === "topRight" || anchor === "bottomRight";
-      var bottom = anchor === "bottomLeft" || anchor === "bottomRight";
-      var handled = true;
-      var moved = false;
-      switch (ev.key) {
-        case "ArrowLeft": element.x = toNum(element.x, 0) + (right ? step : -step); moved = true; break;
-        case "ArrowRight": element.x = toNum(element.x, 0) + (right ? -step : step); moved = true; break;
-        case "ArrowUp": element.y = toNum(element.y, 0) + (bottom ? step : -step); moved = true; break;
-        case "ArrowDown": element.y = toNum(element.y, 0) + (bottom ? -step : step); moved = true; break;
-        case "Delete":
-        case "Backspace": removeSelected(); break;
-        default: handled = false;
-      }
-      if (handled) {
-        ev.preventDefault();
-        markDirty();
-        renderHandles();
-        renderInspector();
-      }
-    });
-
-    // The preview iframe finishing its load is the point at which the document
-    // can actually be handed to it.
-    on(ui.frame, "load", function () {
-      applyToFrame();
-      // The overlay sets up its own layout on load; re-push after a beat so the
-      // editor's unsaved copy wins over whatever was on the server.
-      setTimeout(function () { applyToFrame(); renderHandles(); }, 250);
-    });
-
-    on(window, "resize", function () {
-      fitZoom = true;
-      resizeCanvas();
-    });
-
-    window.addEventListener("beforeunload", function (ev) {
-      clearTimeout(retryTimer);
-      if (sse) {
-        try { sse.close(); } catch (e) { /* already gone */ }
-        sse = null;
-      }
-      if (dirty) {
-        // The one browser dialog worth keeping: leaving with unsaved layout work
-        // is expensive to reproduce.
-        ev.preventDefault();
-        ev.returnValue = "";
-      }
-    });
-
-    renderPresets();
-    renderAddTypes();
+  function renderAll() {
+    // 每次整体重画之后都要延后重量一次：postMessage 是异步的，紧接着量到的还是
+    // 上一版的几何。审计、选择框、遮挡预算全都依赖这一次测量。
+    refreshGeometry();
     renderLayers();
-    updateStatus();
+    renderInspector();
+    renderTheme();
+    renderJsonPane();
+    renderPresets();
+    renderData();
+    fitCanvas();
+    updateDataChips();
+  }
 
-    if (!originOk) {
-      note("file:// 打开时无法连接，请用 http://127.0.0.1:8787/editor/", "bad");
+  // ==========================================================================
+  // 16. 交互
+  // ==========================================================================
+
+  function bindTabs(root, map) {
+    root.querySelectorAll(".ed-tab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        root.querySelectorAll(".ed-tab").forEach(function (other) {
+          other.setAttribute("aria-selected", other === tab ? "true" : "false");
+        });
+        Object.keys(map).forEach(function (key) {
+          $(map[key]).classList.toggle("is-active", key === tab.getAttribute("data-tab"));
+        });
+      });
+    });
+  }
+
+  bindTabs($("railLeft"), {
+    preset: "panelPreset", layers: "panelLayers", data: "panelData"
+  });
+  bindTabs($("railRight"), {
+    inspector: "panelInspector", theme: "panelTheme", json: "panelJson"
+  });
+
+  // ---- 侧栏宽度与折叠 ----
+  var railPrefs = { left: 288, right: 344, leftCollapsed: false, rightCollapsed: false };
+  try {
+    var storedRail = JSON.parse(localStorage.getItem("stevehud.editor.rails") || "null");
+    if (storedRail) railPrefs = Object.assign(railPrefs, storedRail);
+  } catch (e) { /* 隐私模式下 localStorage 会抛，忽略即可 */ }
+
+  function applyRailPrefs() {
+    var shell = $("shell");
+    shell.style.setProperty("--ed-rail-left", railPrefs.left + "px");
+    shell.style.setProperty("--ed-rail-right", railPrefs.right + "px");
+    shell.classList.toggle("left-collapsed", railPrefs.leftCollapsed);
+    shell.classList.toggle("right-collapsed", railPrefs.rightCollapsed);
+    $("railLeft").classList.toggle("is-collapsed", railPrefs.leftCollapsed);
+    $("railRight").classList.toggle("is-collapsed", railPrefs.rightCollapsed);
+    try { localStorage.setItem("stevehud.editor.rails", JSON.stringify(railPrefs)); } catch (e) {}
+    requestAnimationFrame(fitCanvas);
+  }
+
+  function bindGrip(gripId, side) {
+    var grip = $(gripId);
+    var dragging = false;
+    grip.addEventListener("pointerdown", function (ev) {
+      dragging = true;
+      grip.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    });
+    grip.addEventListener("pointermove", function (ev) {
+      if (!dragging) return;
+      var value = side === "left" ? ev.clientX : window.innerWidth - ev.clientX;
+      railPrefs[side] = clamp(Math.round(value), 180, 640);
+      railPrefs[side + "Collapsed"] = false;
+      applyRailPrefs();
+    });
+    grip.addEventListener("pointerup", function (ev) {
+      dragging = false;
+      grip.releasePointerCapture && grip.releasePointerCapture(ev.pointerId);
+    });
+    // 双击折叠：这是最常用的一下，藏在拖拽里就太费事了。
+    grip.addEventListener("dblclick", function () {
+      railPrefs[side + "Collapsed"] = !railPrefs[side + "Collapsed"];
+      applyRailPrefs();
+    });
+  }
+
+  bindGrip("gripLeft", "left");
+  bindGrip("gripRight", "right");
+  document.querySelectorAll("[data-expand]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var side = button.getAttribute("data-expand");
+      railPrefs[side + "Collapsed"] = false;
+      applyRailPrefs();
+    });
+  });
+  applyRailPrefs();
+
+  // ---- 画布交互 ----
+  $("handles").addEventListener("pointerdown", startDrag);
+  window.addEventListener("pointermove", moveDrag);
+  window.addEventListener("pointerup", endDrag);
+
+  // 点画布空白处取消选择；点元素选中它。点在 iframe 上的事件拿不到，所以
+  // 用一个覆盖层做命中测试，而不是监听 iframe 内部。
+  $("canvas").addEventListener("pointerdown", function (ev) {
+    if (ev.target.closest(".ed-handle") || ev.target.closest(".ed-box")) return;
+    var rect = $("canvas").getBoundingClientRect();
+    var x = (ev.clientX - rect.left) / scale;
+    var y = (ev.clientY - rect.top) / scale;
+    var hit = null;
+    for (var i = doc.elements.length - 1; i >= 0; i--) {
+      var candidate = doc.elements[i];
+      var r = rects[candidate.id];
+      if (!r) continue;
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) { hit = candidate.id; break; }
+    }
+    select(hit || "");
+  });
+
+  document.addEventListener("keydown", function (ev) {
+    var tag = (ev.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return;
+    if (ev.key === "Escape") { select(""); return; }
+    if (ev.key === "Delete" || ev.key === "Backspace") {
+      if (selectedId) { removeSelected(); ev.preventDefault(); }
       return;
     }
+    if (ev.key === "s" && (ev.ctrlKey || ev.metaKey)) { save(); ev.preventDefault(); return; }
+    var step = ev.shiftKey ? 10 : 1;
+    if (ev.key === "ArrowLeft") { nudge(-step, 0); ev.preventDefault(); }
+    if (ev.key === "ArrowRight") { nudge(step, 0); ev.preventDefault(); }
+    if (ev.key === "ArrowUp") { nudge(0, -step); ev.preventDefault(); }
+    if (ev.key === "ArrowDown") { nudge(0, step); ev.preventDefault(); }
+  });
 
-    note("编辑器已启动");
-    fetchPresets();
-    fetchLayout();
-    fetchState();
-    openStream();
-  }
+  document.querySelectorAll(".ed-toggle").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var key = button.getAttribute("data-guide");
+      guides[key] = !guides[key];
+      renderGuides();
+      renderHandles();
+    });
+  });
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  // ---- 工具栏 ----
+  $("btnSave").addEventListener("click", save);
+  $("btnRevert").addEventListener("click", function () {
+    if (!dirtyFlag || window.confirm("放弃所有未保存的改动？")) {
+      loadLayout().then(function () { log("已回到上一次保存的版本", "warn"); });
+    }
+  });
+  $("btnFit").addEventListener("click", function () {
+    zoomMode = "fit";
+    fitCanvas();
+  });
+  $("btnZoomIn").addEventListener("click", function () { zoomMode = "manual"; scale = clamp(scale * 1.15, 0.1, 2); fitCanvas(); });
+  $("btnZoomOut").addEventListener("click", function () { zoomMode = "manual"; scale = clamp(scale / 1.15, 0.1, 2); fitCanvas(); });
+  $("btnExport").addEventListener("click", function () {
+    var blob = new Blob([serialise()], { type: "application/json" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "stevehud-layout.json";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    log("已导出 JSON", "ok");
+  });
+  $("btnImport").addEventListener("click", function () { $("importFile").click(); });
+  $("importFile").addEventListener("change", function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var parsed = JSON.parse(String(reader.result));
+        if (!parsed || !parsed.elements) throw new Error("缺少 elements");
+        doc = parsed;
+        selectedId = doc.elements.length ? doc.elements[0].id : "";
+        pushDraft();
+        markDirty();
+        renderAll();
+        log("已导入 " + file.name, "ok");
+      } catch (e) {
+        log("导入失败：" + e.message, "bad");
+      }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  });
+
+  $("btnFormat").addEventListener("click", function () {
+    try {
+      var parsed = JSON.parse($("json").value);
+      doc = parsed;
+      pushDraft();
+      markDirty();
+      renderAll();
+      log("JSON 已格式化", "ok");
+    } catch (e) {
+      log("JSON 无法解析：" + e.message, "bad");
+    }
+  });
+  $("btnApplyJson").addEventListener("click", function () {
+    try {
+      var parsed = JSON.parse($("json").value);
+      if (!parsed || !parsed.elements) throw new Error("缺少 elements 数组");
+      doc = parsed;
+      if (!findElement(selectedId)) selectedId = doc.elements.length ? doc.elements[0].id : "";
+      pushDraft();
+      markDirty();
+      renderAll();
+      log("已应用 JSON 面板里的文档", "ok");
+    } catch (e) {
+      log("应用失败：" + e.message, "bad");
+    }
+  });
+
+  // ---- 控制台 ----
+  $("btnConsole").addEventListener("click", function () {
+    $("shell").classList.toggle("has-console");
+    requestAnimationFrame(fitCanvas);
+  });
+  $("btnCloseConsole").addEventListener("click", function () {
+    $("shell").classList.remove("has-console");
+    requestAnimationFrame(fitCanvas);
+  });
+  $("btnClearLog").addEventListener("click", function () { logs = []; renderLog(); });
+
+  // ---- iframe ----
+  frame.addEventListener("load", function () {
+    log("预览已就绪", "");
+    setTimeout(function () {
+      pushDraft();
+      measure();
+      renderHandles();
+      renderBudget();
+    }, 120);
+  });
+
+  window.addEventListener("resize", function () {
+    if (zoomMode === "fit") fitCanvas();
+    else { renderGuides(); renderHandles(); }
+  });
+
+  // ==========================================================================
+  // 17. 启动
+  // ==========================================================================
+
+  log("导播台启动，正在连接本机图形服务…", "");
+  Promise.all([loadPresets(), loadLayout()])
+    .then(function () { openStream(); })
+    ["catch"](function (e) {
+      log("载入失败：" + e.message, "bad");
+      openStream();
+    });
 })();
 </script>
-
 </body>
 </html>

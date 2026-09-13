@@ -1,5 +1,5 @@
 {
-  "command.usage": "&6[SteveHUD] &r用法：/stevehud <status|resend|scene|score|clock|announce|ticker|lower3|event|stage|demo|reset>",
+  "command.usage": "&6[SteveHUD] &r用法：/stevehud <status|resend|scene|score|clock|announce|ticker|lower3|stat|event|stage|demo|reset>",
   "command.unknown": "&6[SteveHUD] &r未知子命令 &e%s&r。",
   "command.config": "&6[SteveHUD] &r设置界面是客户端命令，请在游戏内输入 &e/shudconfig&r。服务端无法替你打开——那些设置属于你自己的客户端。",
   "command.no_such_side": "&6[SteveHUD] &r没有这一方。可用：&e%s",
@@ -38,5 +38,13 @@
   "command.layout.cleared": "&6[SteveHUD] &r全服版面已清除。各客户端回到自己的本机版面。",
   "command.layout.presets": "&6[SteveHUD] &r可用版面包：&e%s",
   "command.layout.unknown": "&6[SteveHUD] &r没有这个版面包：&e%s&r。可用：&e%s",
-  "command.layout.usage": "&6[SteveHUD] &r用法：/stevehud layout <show|preset <名称>|clear>"
+  "command.layout.usage": "&6[SteveHUD] &r用法：/stevehud layout <show|preset <名称>|clear>",
+
+  "command.stat.usage": "&6[SteveHUD] &r用法：/stevehud stat <看板> <数值> <名称…> [@方位]，或 /stevehud stat <看板> clear，或 /stevehud stat clear",
+  "command.stat.set": "&6[SteveHUD] &r看板 &e%s&r：&e%s&r（%s）= &e%s",
+  "command.stat.report": "&6[SteveHUD] &r看板 &e%s&r：%s",
+  "command.stat.empty": "&6[SteveHUD] &r看板 &e%s&r 还没有数据。指向它的元素会整块收掉，画面上不会留空框。",
+  "command.stat.cleared": "&6[SteveHUD] &r看板 &e%s&r 已清空。",
+  "command.stat.cleared_all": "&6[SteveHUD] &r所有看板数据已清空。",
+  "command.stat.invalid_value": "&6[SteveHUD] &r&e%s&r 不是数字。"
 }

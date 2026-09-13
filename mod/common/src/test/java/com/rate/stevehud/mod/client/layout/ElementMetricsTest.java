@@ -19,17 +19,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ElementMetricsTest {
 
     @Test
-    @DisplayName("the shipped flagship package sits exactly at the reference")
-    void esportsIsTheBaseline() {
-        // This is what anchors the table to a real document rather than to a number
-        // someone liked. The esports package is the reference package: every element
-        // it sizes explicitly must come out at ratio 1, so the feature cannot change
-        // how the flagship package looks.
-        Layout layout = Layouts.load(Layouts.PRESET_ESPORTS);
-        for (Layout.Element element : layout.elements) {
-            assertEquals(1f, ElementMetrics.boxRatio(element),
-                    "esports / " + element.id + " is not at the reference width, so adding"
-                            + " box-fitting would have silently restyled the default package");
+    @DisplayName("every explicitly sized element in a shipped package has a reference to fit into")
+    void shippedPackagesAreFullyFitted() {
+        // The failure this catches is silent: a type with no reference width that a
+        // package sizes anyway stays at its designed type size inside a box the
+        // document made twice as wide — a big panel full of small text, with nothing
+        // anywhere reporting a problem. Reading the property out of the shipped
+        // documents is what keeps the table anchored to real packages rather than to
+        // numbers that agree with themselves.
+        for (String preset : Layouts.presetNames()) {
+            for (Layout.Element element : Layouts.load(preset).elements) {
+                if (element.width <= 0) {
+                    continue;
+                }
+                assertTrue(ElementMetrics.referenceWidth(element.type) > 0,
+                        preset + " sizes " + element.id + " (" + element.type
+                                + ") explicitly, but that type has no reference width, so"
+                                + " its text would never follow its box");
+            }
         }
     }
 
@@ -39,11 +46,11 @@ class ElementMetricsTest {
         // The reference is a baseline, not a constraint: a package built for a more
         // generous look sizes its panels up, and its type comes with it. What must not
         // happen is a ratio so extreme it is unreadable, which the clamp covers.
-        Layout olympic = Layouts.load(Layouts.PRESET_OLYMPIC);
-        Layout.Element bug = olympic.first(Layout.TYPE_MATCH_BUG);
+        Layout olympia = Layouts.load(Layouts.PRESET_OLYMPIA);
+        Layout.Element bug = olympia.first(Layout.TYPE_MATCH_BUG);
         assertNotNull(bug);
         assertTrue(bug.width > ElementMetrics.referenceWidth(Layout.TYPE_MATCH_BUG),
-                "the olympic package is the larger-format one");
+                "the olympia package is the larger-format one");
 
         float ratio = ElementMetrics.boxRatio(bug);
         assertTrue(ratio > 1f && ratio < 1.5f,
@@ -64,7 +71,10 @@ class ElementMetricsTest {
         // A typo'd 0 here would turn the feature off for that element with no other
         // symptom, which is exactly the kind of silence a test should break.
         for (String type : List.of(Layout.TYPE_MATCH_BUG, Layout.TYPE_EVENT_INFO,
-                Layout.TYPE_TIMER, Layout.TYPE_LOWER_THIRD, Layout.TYPE_TICKER)) {
+                Layout.TYPE_TIMER, Layout.TYPE_LOWER_THIRD, Layout.TYPE_TICKER,
+                Layout.TYPE_STAT_COMPARE, Layout.TYPE_LEADER_BOARD, Layout.TYPE_SERIES_CHART,
+                Layout.TYPE_KPI_TILES, Layout.TYPE_ROSTER_CARD, Layout.TYPE_SERIES_SCORE,
+                Layout.TYPE_TIMELINE, Layout.TYPE_HEAD_TO_HEAD)) {
             assertTrue(ElementMetrics.referenceWidth(type) > 0,
                     type + " has no reference width, so its text would never follow its box");
         }
@@ -94,9 +104,14 @@ class ElementMetricsTest {
     @DisplayName("resizing a box scales the type with it")
     void resizingScalesTheType() {
         // Twice the box, twice the type. That is the whole requirement.
-        assertEquals(2f, ElementMetrics.boxRatio(Layout.TYPE_MATCH_BUG, 692));
-        assertEquals(0.5f, ElementMetrics.boxRatio(Layout.TYPE_MATCH_BUG, 173));
-        assertEquals(1f, ElementMetrics.boxRatio(Layout.TYPE_MATCH_BUG, 346),
+        //
+        // Derived from the reference rather than written out, so moving the
+        // reference does not silently turn this into an assertion about 1.99.
+        int reference = ElementMetrics.referenceWidth(Layout.TYPE_MATCH_BUG);
+        assertTrue(reference > 0, "the bug has to have a reference for this to mean anything");
+        assertEquals(2f, ElementMetrics.boxRatio(Layout.TYPE_MATCH_BUG, reference * 2));
+        assertEquals(0.5f, ElementMetrics.boxRatio(Layout.TYPE_MATCH_BUG, reference / 2));
+        assertEquals(1f, ElementMetrics.boxRatio(Layout.TYPE_MATCH_BUG, reference),
                 "the designed size is the identity");
     }
 
@@ -133,14 +148,17 @@ class ElementMetricsTest {
         int end = page.indexOf("};", start);
         String table = page.substring(start, end);
 
-        for (Layout.Element element : Layouts.load(Layouts.PRESET_ESPORTS).elements) {
-            int expected = ElementMetrics.referenceWidth(element.type);
+        // Every type, not just the ones a preset happens to use: a board whose
+        // reference was typo'd would otherwise only show up on the day someone
+        // dragged a box in the editor.
+        for (String type : Layout.TYPES) {
+            int expected = ElementMetrics.referenceWidth(type);
             java.util.regex.Matcher matcher = java.util.regex.Pattern
-                    .compile("\\b" + element.type + ":\\s*(\\d+)")
+                    .compile("\\b" + type + ":\\s*(\\d+)")
                     .matcher(table);
-            assertTrue(matcher.find(), "the overlay table is missing " + element.type);
+            assertTrue(matcher.find(), "the overlay table is missing " + type);
             assertEquals(expected, Integer.parseInt(matcher.group(1)),
-                    "the overlay's reference width for " + element.type
+                    "the overlay's reference width for " + type
                             + " disagrees with ElementMetrics");
         }
     }

@@ -115,6 +115,12 @@ public final class MatchHud {
                     base.forElement(element, palette, 0, 0, alpha),
                     base.screenH / 2 + Math.round(element.y * base.unit));
             case Layout.TYPE_TICKER -> drawTicker(base, element, palette, alpha, scale);
+            // Data boards get the panel chrome drawn under them, so eight painters
+            // do not each reimplement a background and then disagree about its
+            // padding.
+            case Layout.TYPE_STAT_COMPARE, Layout.TYPE_LEADER_BOARD, Layout.TYPE_SERIES_CHART,
+                 Layout.TYPE_KPI_TILES, Layout.TYPE_ROSTER_CARD, Layout.TYPE_SERIES_SCORE,
+                 Layout.TYPE_TIMELINE -> board(base, element, palette, alpha, scale);
             default -> anchored(base, element, palette, alpha, scale);
         }
     }
@@ -210,6 +216,54 @@ public final class MatchHud {
     }
 
     /**
+     * A data board: the shared panel chrome, then the painter's content inside it.
+     *
+     * <p>Separate from {@link #anchored} because a board's background has to be as
+     * tall as the board actually turned out to be, and that height is only known
+     * after measuring the painter. Every board type would otherwise carry its own
+     * copy of "draw a gradient, a border and a left accent bar", and they would
+     * drift apart the first time one of them was tweaked.
+     */
+    private static void board(Panels.Ctx base, Layout.Element element,
+                              Palette palette, float alpha, float scale) {
+        float ratio = boxRatio(element);
+        scale *= ratio;
+        int boxW = Math.round(Panels.naturalWidth(element.type) * base.unit);
+        int boxH = element.height > 0 ? Math.round(element.height * base.unit) : 0;
+
+        Panels.Ctx configured = base.forElement(element, palette, boxW, boxH, alpha);
+        int measured = paint(configured.measuring(), element.type, 0, 0);
+        // A board with no data measures 0 and is skipped, so an unfed panel is
+        // absent rather than an empty frame on air.
+        if (measured <= 0) {
+            return;
+        }
+        int height = boxH > 0 ? boxH : measured;
+
+        Anchor anchor = Anchor.of(element.anchor);
+        int marginX = Math.round(element.x * base.unit);
+        int marginY = Math.round(element.y * base.unit);
+        if (anchor.isBottom()) {
+            marginY += Math.round(base.tickerScreenHeight / Math.max(scale, 0.05f));
+        }
+
+        int[] at = anchor.place(boxW, height, scale, base.screenW, base.screenH, marginX, marginY);
+        int localX = Math.round(at[0] / scale);
+        int localY = Math.round(at[1] / scale);
+
+        HudScale.push(base.ctx, scale);
+        try {
+            // The chrome is painted in the untransformed drawing space at the same
+            // local coordinates the painter uses, so the two cannot disagree about
+            // where the board is.
+            Panels.panelChrome(configured, localX, localY, boxW, height);
+            paint(configured, element.type, localX, localY);
+        } finally {
+            HudScale.pop(base.ctx);
+        }
+    }
+
+    /**
      * How much the document's box differs from the size the type is designed at.
      *
      * <p>1 when the element is content-sized, since there is then no box to fit into.
@@ -232,6 +286,14 @@ public final class MatchHud {
             case Layout.TYPE_TIMER -> Panels.timer(c, x, y);
             case Layout.TYPE_LOWER_THIRD -> Panels.lowerThird(c, x, y);
             case Layout.TYPE_TEXT -> Panels.text(c, x, y);
+            case Layout.TYPE_STAT_COMPARE -> Panels.statCompare(c, x, y);
+            case Layout.TYPE_LEADER_BOARD -> Panels.leaderBoard(c, x, y);
+            case Layout.TYPE_SERIES_CHART -> Panels.seriesChart(c, x, y);
+            case Layout.TYPE_KPI_TILES -> Panels.kpiTiles(c, x, y);
+            case Layout.TYPE_ROSTER_CARD -> Panels.rosterCard(c, x, y);
+            case Layout.TYPE_SERIES_SCORE -> Panels.seriesScore(c, x, y);
+            case Layout.TYPE_TIMELINE -> Panels.timeline(c, x, y);
+            case Layout.TYPE_HEAD_TO_HEAD -> Panels.headToHead(c, x, y);
             default -> 0;
         };
     }

@@ -3,43 +3,56 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SteveHUD 包装页 (Overlay)</title>
+<title>SteveHUD 转播包装</title>
 <link rel="stylesheet" href="../shared/stevehud.css">
 </head>
 <body class="overlay-page">
 
 <!--
-  SteveHUD broadcast package.
+  SteveHUD 转播包装页（Overlay）
 
-  Point OBS at http://127.0.0.1:8787/overlay/ as a browser source at 1920x1080.
-  The page background is transparent on purpose: only the elements paint,
-  everything else shows the game.
+  在 OBS 里把浏览器源指向 http://127.0.0.1:8787/overlay/，尺寸 1920x1080。
+  页面背景是透明的，这是刻意的：只有图形元素上色，其余地方透出游戏画面。
 
-  NOTHING about the package is written in this file. Which elements exist, where
-  they sit, how big they are, what colour they are and how they arrive all come
-  from a layout document fetched from the local graphics server — the same
-  document the in-game HUD draws and the layout editor edits. This page is the
-  renderer, and only the renderer, so the stream and the players' screens cannot
-  disagree about the package.
+  ---------------------------------------------------------------------------
+  这个文件里没有一像素的"版面"
+  ---------------------------------------------------------------------------
 
-  Three inputs drive every pixel below:
+  有哪些元素、放在哪、多大、什么颜色、怎么进场，全部来自一份版面文档，
+  它由本地图形服务提供，游戏内 HUD 画的是同一份，编辑器改的也是同一份。
+  本页只是渲染器，也只是渲染器 —— 这样直播画面和玩家屏幕不可能对不上。
 
-    GET /api/layout + the "layout" SSE event   what to draw and where
-    GET /api/state  + the default SSE event    the match data to draw
-    one requestAnimationFrame loop             the wall clock and the marquee
+  三个输入驱动下面每一个像素：
 
-  A layout edit is also accepted by postMessage from the editor, which is how
-  the editor gives live feedback while an element is being dragged instead of
-  waiting for a save.
+    GET /api/layout + "layout" SSE 事件   画什么、画在哪
+    GET /api/state  + 默认 SSE 事件       画什么数据
+    一个 requestAnimationFrame 循环       挂钟与跑马灯
+
+  拖拽中的位置由编辑器通过 postMessage 直接推给本页，这是编辑器能做到
+  "拖的时候就在动"而不是"松手才动"的原因。
+
+  ---------------------------------------------------------------------------
+  渲染器的四条纪律
+  ---------------------------------------------------------------------------
+
+  1. 版面文档是位置、尺寸、颜色的唯一来源。上播看着不对，必须能在编辑器里
+     改好，而不是来这里改代码。
+
+  2. 畸形载荷一律丢弃，保留上一份好状态。直播中，旧的比分板永远好过空白。
+
+  3. 每个元素都是可选的，没数据就整块收掉（.is-blank），而不是在画面上留一
+     个空框。
+
+  4. 文字先缩字号，缩到下限才省略号。这是"英文显示不全"这类问题的根治办法：
+     数据文本全部走 .fit，永远不硬切。
 -->
 
 <div class="stage" id="stage">
 
-  <!-- Health of the page's own link, and an honest marker for local preview
-       data. Only on screen when something needs saying. -->
+  <!-- 页面自身链路健康度，以及本地预览数据的诚实标记。有事才出现。 -->
   <div class="status-chip" id="statusChip">
     <i class="dot status-dot"></i>
-    <span class="status-text clip" id="statusText"></span>
+    <span id="statusText"></span>
   </div>
 
 </div>
@@ -47,36 +60,25 @@
 <script>
 /* SteveHUD overlay.
  *
- * A renderer for the layout document. The shape is:
+ * 结构是三张表：
  *
- *   elements  a registry of component builders, one per element type, each
- *             able to mount its markup and to update it from the match state
- *   layout    diff the incoming document against the current one, mounting and
- *             removing elements, then positioning every one of them
- *   state     feed the match data into the mounted components
+ *   BUILDERS   元素类型 -> 组件构造器，负责挂载标记、把比赛数据写进去
+ *   layout     把进来的文档和当前文档做差量，挂载/卸载元素，然后逐个定位
+ *   state      把数据喂给已挂载的组件
  *
- * Three rules matter more than the rest:
- *
- *   * the layout document is the only source of position, size and colour. If
- *     something looks wrong on air it must be fixable in the editor, not here;
- *   * a malformed payload is discarded and the last good state stays on screen.
- *     During a broadcast the previous scoreboard beats a blank one;
- *   * every element is optional and hides itself rather than drawing an empty
- *     box, so a document missing a ticker does not leave a bare strip.
- *
- * No framework, no build step, no network beyond this machine.
+ * 无框架、无构建、除本机以外无网络。
  */
 (function () {
   "use strict";
 
-  // ---- the element registry ----------------------------------------------
+  // ==========================================================================
+  // 0. 小工具
+  // ==========================================================================
 
-  /* Design pixel -> CSS pixel. The one place viewport size is consulted. */
+  /* 设计像素 -> CSS 像素。全文件唯一一个读取视口尺寸的地方。 */
   var unit = 1;
 
-  function px(design) {
-    return (design * unit) + "px";
-  }
+  function px(design) { return (design * unit) + "px"; }
 
   function el(tag, className) {
     var node = document.createElement(tag);
@@ -84,9 +86,16 @@
     return node;
   }
 
+  function svgEl(tag, className) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    if (className) node.setAttribute("class", className);
+    return node;
+  }
+
   function setText(node, text) {
-    // textContent, never innerHTML: data never becomes markup.
-    if (node && node.textContent !== text) node.textContent = text;
+    // 永远 textContent，绝不 innerHTML：数据永远不会变成标记。
+    var value = text === null || text === undefined ? "" : String(text);
+    if (node && node.textContent !== value) node.textContent = value;
   }
 
   function setVar(node, name, value) {
@@ -96,8 +105,13 @@
     node.style.setProperty(name, value);
   }
 
-  /* Removes and re-adds a class across a forced reflow, which is the only
-     reliable way to replay a CSS transition or animation. */
+  function clearVar(node, name) {
+    if (node.__vars && node.__vars[name] === undefined) return;
+    if (node.__vars) delete node.__vars[name];
+    node.style.removeProperty(name);
+  }
+
+  /* 跨一次强制重排移除再添加类名，这是重放 CSS 过渡/动画唯一可靠的办法。 */
   function restart(node, cls) {
     node.classList.remove(cls);
     void node.offsetWidth;
@@ -108,15 +122,30 @@
     if (window.console && console.warn) console.warn("[SteveHUD overlay] " + msg);
   }
 
-  /* Dark or light text on a team colour block. Proper sRGB relative luminance
-     (gamma-decoded), because the naive weighted average of the encoded values
-     calls a mid blue "light" and puts white text on it at 2.9:1 contrast. */
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  /* ---- 颜色 ---------------------------------------------------------- */
+
+  /* 正确的 sRGB 相对亮度（先做 gamma 解码）。朴素加权平均会把一个中蓝判成
+     "亮"，然后在它上面放白字，对比度只有 2.9:1。 */
   function rgbOf(color) {
     var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || ""));
     if (!m) return null;
     var h = m[1];
     if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
     return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  /* 带 alpha 的 #RRGGBBAA（alpha 在最后，和浏览器写 CSS 的顺序一致）。 */
+  function rgbaOf(color) {
+    var m = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i.exec(String(color || ""));
+    if (!m) return null;
+    var h = m[1];
+    var r = parseInt(h.slice(0, 2), 16);
+    var g = parseInt(h.slice(2, 4), 16);
+    var b = parseInt(h.slice(4, 6), 16);
+    var a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
+    return "rgba(" + r + "," + g + "," + b + "," + (Math.round(a * 1000) / 1000) + ")";
   }
 
   function channel(v) {
@@ -136,41 +165,200 @@
     return c ? "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha + ")" : null;
   }
 
-  /* A colour as a CSS custom-property value. Anything that is not a plain hex
-     value is dropped for the fallback, because these reach the DOM as style and
-     the document is edited by hand. */
+  /* 任何一个要写进 DOM style 的颜色值，都必须是干净的十六进制。 */
   var COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
   function color(value, fallback) {
     return typeof value === "string" && COLOR_RE.test(value.trim()) ? value.trim() : fallback;
   }
 
-  // ---- state --------------------------------------------------------------
+  // ==========================================================================
+  // 1. 自适应文字
+  // ==========================================================================
 
-  var layout = null;         // the document being drawn
-  var state = null;          // the last normalised match state
-  var mounted = [];          // {id, type, node, body, component, element}
+  /* 数据文本的排版顺序：先缩字号塞进去，缩到下限 MIN_FIT 还塞不下，才交给
+     .clip 的省略号。
+
+     为什么不是简单地 overflow:hidden：转播画面上"皇家马德里电子竞技俱乐部"
+     和 "T1" 要占同样一格，切掉尾巴会把队名读成另一个队。缩一点字号是所有人
+     都能接受的妥协，丢掉字不是。
+
+     量测和写入分两批做，中间没有布局读取，所以一次 flush 只有一次重排。 */
+  var MIN_FIT = 0.66;
+  var fitQueue = [];
+
+  function fitSpan(parent, className) {
+    var span = el("span", (className ? className + " " : "") + "fit");
+    parent.appendChild(span);
+    return span;
+  }
+
+  function setFit(span, text, uppercase) {
+    if (!span) return;
+    var value = uppercase ? String(text === null || text === undefined ? "" : text).toUpperCase()
+                          : (text === null || text === undefined ? "" : String(text));
+    if (span.__text === value) return;
+    span.__text = value;
+    span.textContent = value;
+    span.style.setProperty("--fit", "1");
+    span.classList.remove("is-tight");
+    span.__dirty = true;
+    fitQueue.push(span);
+  }
+
+  function markAllDirty() {
+    for (var i = 0; i < mounted.length; i++) {
+      var fits = mounted[i].fits;
+      if (!fits) continue;
+      for (var j = 0; j < fits.length; j++) {
+        fits[j].style.setProperty("--fit", "1");
+        fits[j].classList.remove("is-tight");
+        fits[j].__dirty = true;
+        fitQueue.push(fits[j]);
+      }
+    }
+  }
+
+  function flushFit() {
+    if (!fitQueue.length) return;
+    var queue = fitQueue;
+    fitQueue = [];
+
+    /* 第一批：全部读。 */
+    var i, n, w;
+    for (i = 0; i < queue.length; i++) {
+      n = queue[i];
+      n.__dirty = false;
+      n.__w = n.clientWidth;
+    }
+    /* 第二批：全部写。 */
+    for (i = 0; i < queue.length; i++) {
+      n = queue[i];
+      w = n.__w;
+      if (!w) continue;
+      var sw = n.scrollWidth;
+      if (sw <= w) continue;
+      var fit = w / sw;
+      n.style.setProperty("--fit", String(fit));
+      // 字号变了，字的宽度也跟着变，迭代两轮足够收敛。
+      for (var pass = 0; pass < 2; pass++) {
+        var now = n.scrollWidth;
+        if (now <= w) break;
+        fit = fit * (w / now) * 0.996;
+        n.style.setProperty("--fit", String(fit));
+      }
+      if (fit < MIN_FIT) {
+        fit = MIN_FIT;
+        n.style.setProperty("--fit", String(fit));
+      }
+      if (n.scrollWidth > w + 1) n.classList.add("is-tight");
+    }
+  }
+
+  // ==========================================================================
+  // 2. 状态
+  // ==========================================================================
+
+  var layout = null;      // 正在画的文档
+  var state = null;       // 最后一份规整过的比赛状态
+  var mounted = [];       // {id, type, node, body, component, element, fits}
   var tickerOn = false;
 
   function stateOrDefault() {
-    return state || { sides: [], ticker: [], event: {}, clock: {}, announcement: {}, lowerThird: {} };
+    return state || {
+      sides: [], ticker: [], boards: [],
+      event: {}, clock: {}, announcement: {}, lowerThird: {}
+    };
   }
 
-  // ---- component builders -------------------------------------------------
+  function option(element, key, fallback) {
+    var options = element && element.options;
+    if (!options) return fallback;
+    var value = options[key];
+    if (value === undefined || value === null || value === "") return fallback;
+    return value;
+  }
 
-  /* Each returns { body, update(state, element) } where body is the markup and
-     update writes the match data into it. Anything that needs to react to a
-     *change* rather than to a value keeps its own previous reading. */
+  function optionNum(element, key, fallback) {
+    var n = parseFloat(option(element, key, ""));
+    return isFinite(n) ? n : fallback;
+  }
+
+  function optionBool(element, key, fallback) {
+    var v = option(element, key, null);
+    if (v === null) return fallback;
+    return v === true || v === "true" || v === "1" || v === "yes" || v === "on";
+  }
+
+  /* 从状态里按 key 取一块看板数据。看板是"一张表 + 一个标题"，
+     所有数据看板共用这一种数据形状，所以加一种板不需要改协议。 */
+  function boardOf(s, key) {
+    if (!key || !s.boards) return null;
+    for (var i = 0; i < s.boards.length; i++) {
+      if (s.boards[i].key === key) return s.boards[i];
+    }
+    return null;
+  }
+
+  /* 元素该读哪块数据：options.board 优先，其次用元素 id 当 key。
+     这样把元素命名成 "economy" 就能直接接上叫 economy 的数据源。 */
+  function boardFor(element, s) {
+    return boardOf(s, option(element, "board", element.id)) ||
+           boardOf(s, option(element, "board", "")) ||
+           null;
+  }
+
+  function sideById(s, id) {
+    if (id) {
+      for (var i = 0; i < s.sides.length; i++) {
+        if (s.sides[i].id === id) return s.sides[i];
+      }
+    }
+    return null;
+  }
+
+  function homeAway(s) {
+    return [s.sides[0] || null, s.sides[1] || null];
+  }
+
+  function metricText(m) {
+    if (m.display) return m.display;
+    return formatNumber(m.value);
+  }
+
+  function formatNumber(v) {
+    if (!isFinite(v)) return "";
+    if (Math.abs(v) >= 1000) {
+      return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+    return String(Math.round(v * 10) / 10);
+  }
+
+  // ==========================================================================
+  // 3. 组件构造器
+  // ==========================================================================
+
+  /* 每个构造器返回 { body, update(state, element), tick?(dt, now) }。
+     body 是标记，update 把比赛数据写进去。任何需要"对变化做出反应"而不是
+     "对一个值做出反应"的组件，自己记住上一次读数。 */
+
+  // ---- 3.1 比分角标 ------------------------------------------------------
 
   function buildMatchBug() {
-    var body = el("div", "el-body panel panel-bug");
+    var body = el("div", "el-body bug");
     var head = el("div", "bug-head");
     var badge = el("span", "live-badge");
     badge.appendChild(el("i", "dot live-dot"));
-    badge.appendChild(document.createTextNode("LIVE"));
-    var clock = el("span", "wall-clock");
+    var badgeText = el("span", "fit");
+    badgeText.style.setProperty("--fit", "1");
+    badgeText.textContent = "LIVE";
+    badge.appendChild(badgeText);
+    var title = el("div", "bug-title");
+    var titleFit = fitSpan(title);
+    var wallClock = el("span", "bug-clock");
     head.appendChild(badge);
-    head.appendChild(clock);
+    head.appendChild(title);
+    head.appendChild(wallClock);
     var rows = el("div", "bug-rows");
     var empty = el("div", "bug-empty clip");
     empty.textContent = "等待数据";
@@ -181,10 +369,20 @@
     var sideRows = {};
     return {
       body: body,
-      update: function (s) {
+      update: function (s, element) {
         var prevById = {};
-        var previous = this._prevSides || [];
-        previous.forEach(function (side) { prevById[side.id] = side; });
+        (this._prevSides || []).forEach(function (side) { prevById[side.id] = side; });
+
+        var clockMode = option(element, "clock", "wall");
+        badge.hidden = !optionBool(element, "showLive", true);
+        wallClock.hidden = clockMode === "none";
+        setFit(badgeText, option(element, "liveText", "LIVE"));
+
+        var caption = option(element, "title", "");
+        if (!caption) caption = s.event.stage || s.event.name;
+        setFit(titleFit, caption, element.style && element.style.uppercase);
+        title.hidden = !caption;
+        this._clockMode = clockMode;
 
         var seen = {};
         s.sides.forEach(function (side, index) {
@@ -195,29 +393,27 @@
             rows.appendChild(row.root);
           }
           seen[side.id] = true;
-          setText(row.code, side.short);
-          setText(row.name, side.name);
-          row.code.classList.toggle("is-blank", side.short === "");
+          setFit(row.code, side.short || side.name, true);
+          setFit(row.name, side.name);
+          row.root.hidden = false;
 
           if (row.color !== side.color) {
             row.color = side.color;
             setVar(row.root, "--team", side.color);
-            setVar(row.root, "--team-dim", rgba(side.color, 0.13) || "rgba(255,255,255,0.06)");
+            setVar(row.root, "--team-dim", rgba(side.color, 0.14) || "rgba(255,255,255,0.06)");
             setVar(row.root, "--team-edge", rgba(side.color, 0.5) || "rgba(255,255,255,0.25)");
             setVar(row.root, "--team-flash", rgba(side.color, 0.42) || "rgba(255,255,255,0.2)");
           }
 
-          // Score last: the pop compares against the previous state, and the
-          // first render must not fire it.
+          // 比分最后写：pop 要和上一份状态比，首帧不能触发。
           var scoreText = String(side.score);
           var before = prevById[side.id];
-          if (row.score.textContent !== scoreText) {
-            row.score.textContent = scoreText;
+          if (row.score.__text !== scoreText) {
+            setFit(row.score, scoreText);
             if (before && before.score !== side.score) bump(row);
           }
 
-          // Keep DOM order equal to the array order, so a side that moves
-          // position moves on screen too.
+          // 让 DOM 顺序等于数组顺序，换位就在画面上换位。
           var target = rows.children[index];
           if (target !== row.root) rows.insertBefore(row.root, target || null);
         });
@@ -234,90 +430,110 @@
         empty.classList.toggle("is-blank", s.sides.length > 0);
         this._prevSides = s.sides.slice();
       },
-      tick: function (now) {
+      tick: function (now, s) {
+        if (wallClock.hidden) return;
+        if (this._clockMode === "match") {
+          setText(wallClock, (s.clock && s.clock.value) || "");
+          return;
+        }
         var d = new Date(now);
-        setText(clock, pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()));
+        setText(wallClock, pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()));
       }
     };
   }
 
   function buildSideRow() {
     var root = el("div", "side-row");
-    var code = el("span", "side-code clip");
-    var name = el("span", "side-name clip");
-    var score = el("span", "side-score");
-    score.addEventListener("animationend", function () {
-      score.classList.remove("is-bumped");
-    });
+    var code = el("span", "side-code");
+    var codeFit = fitSpan(code);
+    var name = el("span", "side-name");
+    var nameFit = fitSpan(name);
+    var score = el("span", "side-score num");
+    var scoreFit = fitSpan(score);
+    score.addEventListener("animationend", function () { score.classList.remove("is-bumped"); });
     root.appendChild(code);
     root.appendChild(name);
     root.appendChild(score);
-    return { root: root, code: code, name: name, score: score, color: "", timer: 0 };
+    return { root: root, code: codeFit, name: nameFit, score: scoreFit, color: "", timer: 0 };
   }
 
   function bump(row) {
-    // The score pops (keyframes); the band flashes and fades back (transition
-    // plus one timeout). Two mechanisms because a transition can be removed by a
-    // timer, and a keyframe cannot restart without one.
+    // 比分做关键帧弹跳；整行做过渡加一次超时回退。两套机制是因为过渡可能被
+    // 一次定时器打断，而关键帧没有定时器就无法重放。
     restart(row.score, "is-bumped");
     restart(row.root, "is-bumped");
     clearTimeout(row.timer);
-    row.timer = setTimeout(function () {
-      row.root.classList.remove("is-bumped");
-    }, 90);
+    row.timer = setTimeout(function () { row.root.classList.remove("is-bumped"); }, 90);
   }
 
+  // ---- 3.2 赛事信息 ------------------------------------------------------
+
   function buildEventInfo() {
-    var body = el("div", "el-body panel panel-event");
-    var name = el("div", "event-name clip");
-    var stage = el("div", "event-stage clip");
+    var body = el("div", "el-body event-card");
+    var name = el("div", "event-name");
+    var nameFit = fitSpan(name);
+    var stage = el("div", "event-stage");
+    var stageFit = fitSpan(stage);
     body.appendChild(name);
     body.appendChild(stage);
     return {
       body: body,
-      update: function (s) {
-        setText(name, s.event.name);
-        setText(stage, s.event.stage);
-        name.classList.toggle("is-blank", s.event.name === "");
-        stage.classList.toggle("is-blank", s.event.stage === "");
-        body.classList.toggle("is-blank", s.event.name === "" && s.event.stage === "");
+      update: function (s, element) {
+        var up = element.style && element.style.uppercase;
+        setFit(nameFit, option(element, "title", "") || s.event.name);
+        setFit(stageFit, option(element, "subtitle", "") || s.event.stage, up);
+        name.hidden = !(option(element, "title", "") || s.event.name);
+        stage.hidden = !(option(element, "subtitle", "") || s.event.stage);
+        body.classList.toggle("is-blank", name.hidden && stage.hidden);
       }
     };
   }
 
+  // ---- 3.3 计时器 --------------------------------------------------------
+
   function buildTimer() {
-    var body = el("div", "el-body panel panel-timer");
-    var label = el("div", "timer-label clip");
-    var row = el("div", "timer-value-row");
+    var body = el("div", "el-body timer-card");
+    var label = el("div", "timer-label");
+    var labelFit = fitSpan(label);
+    var row = el("div", "timer-row");
     var dot = el("span", "dot run-dot");
     var value = el("span", "timer-value");
+    var valueFit = fitSpan(value);
     row.appendChild(dot);
     row.appendChild(value);
     body.appendChild(label);
     body.appendChild(row);
     return {
       body: body,
-      update: function (s) {
-        setText(value, s.clock.value);
-        setText(label, s.clock.label);
-        label.classList.toggle("is-blank", s.clock.label === "");
-        body.classList.toggle("is-running", s.clock.running);
-        // No clock at all: hide the panel rather than park "--:--" on air.
-        body.classList.toggle("is-blank", s.clock.value === "");
+      update: function (s, element) {
+        var text = option(element, "title", "") || s.clock.value;
+        setFit(valueFit, text);
+        setFit(labelFit, option(element, "subtitle", "") || s.clock.label);
+        label.hidden = !labelFit.__text;
+        dot.hidden = !optionBool(element, "showDot", true);
+        body.classList.toggle("is-running", !!s.clock.running);
+        // 干脆没有计时就整块收掉，而不是在画面上挂一个 "--:--"。
+        body.classList.toggle("is-blank", !text);
       }
     };
   }
 
+  // ---- 3.4 选手条 --------------------------------------------------------
+
   function buildLowerThird() {
-    var body = el("div", "el-body panel panel-lower");
+    var body = el("div", "el-body lower");
     var colour = el("div", "lower-colour");
-    var code = el("span", "lower-code clip");
+    var code = el("span", "lower-code");
+    var codeFit = fitSpan(code);
     colour.appendChild(code);
     var main = el("div", "lower-main");
-    var name = el("div", "lower-name clip");
+    var name = el("div", "lower-name");
+    var nameFit = fitSpan(name);
     var meta = el("div", "lower-meta");
-    var player = el("span", "lower-player clip");
-    var number = el("span", "lower-number");
+    var player = el("span", "lower-player");
+    var playerFit = fitSpan(player);
+    var number = el("span", "lower-number num");
+    var numberFit = fitSpan(number);
     meta.appendChild(player);
     meta.appendChild(number);
     main.appendChild(name);
@@ -328,30 +544,34 @@
     var key = "";
     return {
       body: body,
-      update: function (s) {
-        var side = resolveSide(s.sides, s.lowerThird.side);
+      update: function (s, element) {
+        var side = sideById(s, s.lowerThird.side) || s.sides[0] || null;
+        var explicit = option(element, "side", "");
+        if (explicit) side = sideById(s, explicit) || side;
         var show = s.lowerThird.visible && !!side;
         if (!show) {
           key = "";
           body.classList.remove("is-in");
+          body.classList.add("is-blank");
           return;
         }
+        body.classList.remove("is-blank");
 
+        var mode = option(element, "mode", "team");
         var first = side.competitors[0] || { name: "", number: "" };
-        setText(code, side.short);
-        setText(name, side.name);
-        setText(player, first.name);
-        setText(number, first.number);
-        code.classList.toggle("is-blank", side.short === "");
-        meta.classList.toggle("is-blank", first.name === "" && first.number === "");
-        number.classList.toggle("is-blank", first.number === "");
+        setFit(codeFit, side.short || side.name, true);
+        setFit(nameFit, mode === "player" && first.name ? first.name : side.name);
+        setFit(playerFit, mode === "player" ? "" : first.name);
+        setFit(numberFit, first.number);
+        code.hidden = !codeFit.__text;
+        meta.hidden = !(playerFit.__text || numberFit.__text);
+        number.hidden = !numberFit.__text;
 
         setVar(body, "--team", side.color);
         setVar(body, "--team-edge", rgba(side.color, 0.55) || "rgba(255,255,255,0.25)");
         setVar(body, "--team-ink", inkOn(side.color));
 
-        // A different competitor re-runs the entrance, which reads as a card
-        // swap rather than text changing under the viewer.
+        // 换人就重放一次入场，读起来是"换了一张卡"，而不是字在观众眼皮底下变。
         var next = side.id + "\u0001" + first.name + "\u0001" + first.number;
         if (next !== key) {
           key = next;
@@ -363,11 +583,17 @@
     };
   }
 
+  // ---- 3.5 信息条 --------------------------------------------------------
+
   function buildTicker() {
     var body = el("div", "el-body ticker");
     var flag = el("div", "ticker-flag");
-    flag.appendChild(el("i", "dot live-dot"));
-    flag.appendChild(document.createTextNode("LIVE"));
+    var flagDot = el("i", "dot");
+    var flagText = el("span", "fit");
+    flagText.style.setProperty("--fit", "1");
+    flagText.textContent = "LIVE";
+    flag.appendChild(flagDot);
+    flag.appendChild(flagText);
     var viewport = el("div", "ticker-viewport");
     var track = el("div", "ticker-track");
     viewport.appendChild(track);
@@ -381,16 +607,9 @@
 
     function layoutTrack() {
       var first = track.firstElementChild;
-      if (!first) {
-        copyWidth = 0;
-        return false;
-      }
+      if (!first) { copyWidth = 0; return false; }
       var width = first.getBoundingClientRect().width;
-      if (!width) {
-        // display:none (the element is gated off): nothing to measure.
-        copyWidth = 0;
-        return false;
-      }
+      if (!width) { copyWidth = 0; return false; }
       copyWidth = width;
       var need = Math.max(2, Math.ceil(viewport.clientWidth / width) + 1);
       while (track.children.length < need) track.appendChild(first.cloneNode(true));
@@ -400,9 +619,13 @@
 
     return {
       body: body,
-      update: function (s) {
-        var next = s.ticker.join("\u0001");
-        if (!s.ticker.length) {
+      update: function (s, element) {
+        var staticMode = option(element, "mode", "scroll") === "static";
+        flag.hidden = !optionBool(element, "showFlag", true);
+        setFit(flagText, option(element, "flag", "LIVE"));
+
+        var next = s.ticker.join("\u0001") + "\u0002" + staticMode;
+        if (!s.ticker.length && !option(element, "title", "")) {
           if (key !== "") {
             key = "";
             items = [];
@@ -418,30 +641,35 @@
         if (next !== key) {
           key = next;
           items = s.ticker.slice();
+          var pinned = option(element, "title", "");
+          if (pinned) items.unshift(pinned);
           offset = 0;
           copyWidth = 0;
-          var proto = el("div", "ticker-copy");
+          var proto = el("div", "ticker-copy" + (staticMode ? " is-static" : ""));
           items.forEach(function (text) {
-            var item = el("span", "ticker-item clip");
-            item.textContent = text;
+            var item = el("span", "ticker-item");
+            var fit = fitSpan(item);
+            setFit(fit, text, element.style && element.style.uppercase);
             proto.appendChild(item);
           });
           track.textContent = "";
           track.appendChild(proto);
           track.style.transform = "";
-          // Measured on the next frame, once the new markup has a box.
+          // 下一帧再量，那时新标记才有盒子。
           requestAnimationFrame(function () { layoutTrack(); });
         }
       },
-      tick: function (dt) {
+      tick: function (dt, s, element) {
+        if (option(element, "mode", "scroll") === "static") return;
         if (!copyWidth) {
           if (items.length) layoutTrack();
           return;
         }
-        // Scale the scroll speed with the canvas so it reads the same at 720p
-        // and 4K: a full crossing stays roughly the same number of seconds.
-        var speed = Math.max(28, (layout.canvas.width * unit) / 22);
-        offset = (offset + speed * dt) % copyWidth;
+        // 滚动速度跟着画布缩放，720p 和 4K 读起来是同一个节奏：走完一遍
+        // 的时间大致相同。
+        var speed = optionNum(element, "speed", 0);
+        if (!speed) speed = Math.max(28, (layout.canvas.width * unit) / 24);
+        offset = (offset + speed * unit * dt) % copyWidth;
         track.style.transform = "translate3d(" + (-offset).toFixed(2) + "px,0,0)";
       },
       hasContent: function () { return items.length > 0; },
@@ -449,36 +677,47 @@
     };
   }
 
+  // ---- 3.6 公告 ----------------------------------------------------------
+
   function buildAnnouncement() {
     var body = el("div", "el-body announce");
     var main = el("div", "announce-main");
     var ruleL = el("span", "announce-rule");
-    var title = el("h1", "announce-title clip");
+    var title = el("h1", "announce-title");
+    var titleFit = fitSpan(title);
     var ruleR = el("span", "announce-rule announce-rule-r");
     main.appendChild(ruleL);
     main.appendChild(title);
     main.appendChild(ruleR);
-    var sub = el("div", "announce-sub clip");
+    var sub = el("div", "announce-sub");
+    var subFit = fitSpan(sub);
     body.appendChild(main);
     body.appendChild(sub);
 
     var key = "";
     return {
       body: body,
-      update: function (s) {
+      update: function (s, element) {
         var a = s.announcement;
-        var show = a.visible && (a.title !== "" || a.subtitle !== "");
+        var titleText = option(element, "title", "") || a.title;
+        var subText = option(element, "subtitle", "") || a.subtitle;
+        var show = (a.visible || optionBool(element, "force", false)) && (titleText || subText);
         if (!show) {
           key = "";
           body.classList.remove("is-in");
+          body.classList.add("is-blank");
           return;
         }
-        setText(title, a.title);
-        setText(sub, a.subtitle);
-        title.classList.toggle("is-blank", a.title === "");
-        sub.classList.toggle("is-blank", a.subtitle === "");
+        body.classList.remove("is-blank");
+        var rules = optionBool(element, "rules", true);
+        setFit(titleFit, titleText, element.style && element.style.uppercase);
+        setFit(subFit, subText);
+        ruleL.hidden = !rules;
+        ruleR.hidden = !rules;
+        title.hidden = !titleText;
+        sub.hidden = !subText;
 
-        var next = a.title + "\u0001" + a.subtitle;
+        var next = titleText + "\u0001" + subText;
         if (next !== key) {
           key = next;
           restart(body, "is-in");
@@ -489,6 +728,8 @@
     };
   }
 
+  // ---- 3.7 安全框 --------------------------------------------------------
+
   function buildFrame() {
     var body = el("div", "el-body frame");
     body.appendChild(el("span", "frame-bar"));
@@ -497,34 +738,48 @@
     });
     return {
       body: body,
-      // The frame carries no match data: it frames the viewport.
-      update: function () {}
-    };
-  }
-
-  function buildText(element) {
-    var body = el("div", "el-body bound-text clip");
-    return {
-      body: body,
-      update: function (s, current) {
-        // A literal, or a path into the match state. Same tiny grammar as
-        // Bindings.java on the mod side.
-        var value = current.binding ? resolveBinding(s, current.binding) : current.text;
-        setText(body, uppercase(value, current));
-        body.classList.toggle("is-blank", !value);
+      // 安全框不承载比赛数据：它框住视口。
+      update: function () {},
+      layout: function (element) {
+        var arms = optionBool(element, "arms", true);
+        var bar = optionBool(element, "bar", true);
+        body.querySelector(".frame-bar").hidden = !bar;
+        var nodes = body.querySelectorAll(".frame-corner");
+        for (var i = 0; i < nodes.length; i++) nodes[i].hidden = !arms;
+        var inset = optionNum(element, "inset", 0);
+        if (inset) {
+          setVar(body, "--frame-inset", px(inset));
+          setVar(body, "--frame-arm", px(optionNum(element, "arm", 72)));
+        }
       }
     };
   }
 
-  function uppercase(value, element) {
-    var up = element && element.style && element.style.uppercase;
-    return up ? String(value || "").toUpperCase() : String(value || "");
+  // ---- 3.8 自由文本 ------------------------------------------------------
+
+  function buildText() {
+    var body = el("div", "el-body bound-text");
+    var fit = fitSpan(body);
+    return {
+      body: body,
+      update: function (s, current) {
+        // 要么是字面量，要么是进比赛状态的一条路径。语法和 mod 侧
+        // Bindings.java 完全一致。
+        var value = current.binding ? resolveBinding(s.__raw || s, current.binding) : current.text;
+        if (value === "" && current.text) value = current.text;
+        setFit(fit, value, current.style && current.style.uppercase);
+        body.classList.toggle("is-blank", !value);
+        var variant = option(current, "variant", "");
+        body.className = "el-body bound-text"
+          + (variant ? " is-" + variant : "")
+          + (current.anim && current.anim.enter !== "none" ? " enter-" + current.anim.enter : "");
+      }
+    };
   }
 
   /**
-   * Reads a value out of the state by path: `event.name`, `sides[0].score`.
-   * The same grammar the mod implements in Bindings.java, kept deliberately
-   * small so the two cannot drift.
+   * 按路径从状态里读一个值：event.name、sides[0].score。
+   * 和 mod 里 Bindings.java 实现的是同一套小语法，刻意做小，免得两边漂移。
    */
   function resolveBinding(root, path) {
     if (!root || !path) return "";
@@ -555,10 +810,680 @@
     if (current === null || current === undefined) return "";
     var type = typeof current;
     if (type === "string" || type === "number" || type === "boolean") return String(current);
-    // An object or array has no sensible one-line rendering, and printing JSON
-    // onto a broadcast graphic is never what the author meant.
+    // 对象或数组没有合理的一行渲染方式，把 JSON 打到转播画面上绝不是作者的本意。
     return "";
   }
+
+  // ==========================================================================
+  // 4. 数据看板
+  // ==========================================================================
+
+  /* 所有看板共用一套骨架：head（标题/单位）+ body（各自的内容）。
+     数据统一来自 state.boards[]，形状是「一张表」：
+
+       { key, title, subtitle, unit, rows: [{ key, label, side, value, display, unit }] }
+
+     一种数据形状撑起九种看板，所以加一种看板不需要动协议，也不需要动插件。 */
+
+  function boardShell(element, s, fallbackTitle) {
+    var body = el("div", "el-body board board-" + element.type);
+    var head = el("div", "board-head");
+    var title = el("div", "board-title");
+    var titleFit = fitSpan(title);
+    var right = el("div", "board-head-right");
+    var rightFit = fitSpan(right);
+    head.appendChild(title);
+    head.appendChild(right);
+    body.appendChild(head);
+    var content = el("div", "board-body");
+    body.appendChild(content);
+    var engine = {
+      body: body, head: head, content: content, title: titleFit, right: rightFit
+    };
+    boardHeader(engine, element, s, fallbackTitle);
+    return engine;
+  }
+
+  /* 标题和数据源每次更新都重新读一遍，绝不在建面板的时候定死。
+
+     这是踩过的坑：一开始把 board 缓存在 engine 上，结果是导播在编辑器里把
+     一块板的「数据源」改掉之后，画面上一直没反应 —— 因为第一次 update 时
+     那个 key 还不存在，engine.board 就永远是 null，元素永久空白。
+     面板的 DOM 可以只建一次，查数据这件事不行。 */
+  function boardHeader(engine, element, s, fallbackTitle) {
+    var board = boardFor(element, s);
+    var caption = option(element, "title", "") || (board && board.title) || fallbackTitle;
+    var unit = option(element, "unit", "") || (board && board.unit) || "";
+    setFit(engine.title, caption, true);
+    setFit(engine.right, unit, true);
+    engine.head.hidden = !caption && !unit;
+    return board;
+  }
+
+  function boardRows(board, element) {
+    var rows = board ? board.rows.slice() : [];
+    var limit = optionNum(element, "maxRows", 0);
+    if (limit > 0) rows = rows.slice(0, limit);
+    return rows;
+  }
+
+  // ---- 4.1 数据对比（双向条） --------------------------------------------
+
+  /* 一条指标一行：左边主队数值，右边客队数值，中间从中轴往两边长的条。
+     比"两条并排的条形图"更省横向空间，也更像对抗而不是两份报告。 */
+  function buildStatCompare() {
+    var engine = null;
+    var rowsRoot = el("div", "board-rows");
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "数据对比");
+        }
+        var board = boardHeader(engine, element, s, "数据对比");
+
+        var ha = homeAway(s);
+        var home = ha[0], away = ha[1];
+        var rows = boardRows(board, element);
+
+        // 按 key 归并两侧，得到 [{key,label,home,away}]。
+        var order = [];
+        var byKey = {};
+        rows.forEach(function (m) {
+          var key = m.key || m.label;
+          if (!key) return;
+          if (!byKey[key]) {
+            byKey[key] = { key: key, label: m.label || key, home: null, away: null };
+            order.push(key);
+          }
+          var slot = byKey[key];
+          if (!slot.label && m.label) slot.label = m.label;
+          if (m.side && home && m.side === home.id) slot.home = m;
+          else if (m.side && away && m.side === away.id) slot.away = m;
+          else if (slot.home === null) slot.home = m;
+          else slot.away = m;
+        });
+
+        /* 默认按「这一行自己的比例」画，而不是所有行共用一个刻度。
+
+           这里是踩过的坑：一开始取全部行的最大值当满格值，于是击杀 42 对上
+           经济 68400 时，除了经济那一行，其余每一根条都缩成 0.1% —— 肉眼看
+           就是「只有一行有数据」。而两块板要传达的信息本来就不同：经济比的是
+           谁的绝对量大，击杀比的是双方占比。所以默认给比例，需要绝对刻度时
+           用 options.max 显式指定。 */
+        var fixedMax = optionNum(element, "max", 0);
+
+        rowsRoot.textContent = "";
+        order.forEach(function (k) {
+          var slot = byKey[k];
+          var row = el("div", "cmp-row");
+          var hv = el("div", "cmp-value num is-home is-end");
+          var hvFit = fitSpan(hv);
+          setFit(hvFit, slot.home ? metricText(slot.home) : "—");
+          var track = el("div", "cmp-track");
+          var hFill = el("span", "cmp-fill is-home");
+          var aFill = el("span", "cmp-fill is-away");
+          var hVal = slot.home ? slot.home.value : 0;
+          var aVal = slot.away ? slot.away.value : 0;
+          var total = hVal + aVal;
+          var hPct, aPct;
+          if (fixedMax > 0) {
+            hPct = Math.max(0, Math.min(100, (hVal / fixedMax) * 100));
+            aPct = Math.max(0, Math.min(100, (aVal / fixedMax) * 100));
+          } else {
+            // 两侧合计占满整条，中轴落在双方的比例线上 —— 一眼看出谁多。
+            hPct = total > 0 ? Math.max(0, Math.min(100, (hVal / total) * 100)) : 0;
+            aPct = total > 0 ? Math.max(0, Math.min(100, (aVal / total) * 100)) : 0;
+          }
+          hFill.style.width = hPct.toFixed(1) + "%";
+          aFill.style.width = aPct.toFixed(1) + "%";
+          track.appendChild(hFill);
+          track.appendChild(aFill);
+          var av = el("div", "cmp-value num is-away");
+          var avFit = fitSpan(av);
+          setFit(avFit, slot.away ? metricText(slot.away) : "—");
+          row.appendChild(hv);
+          row.appendChild(track);
+          row.appendChild(av);
+          rowsRoot.appendChild(row);
+
+          if (optionBool(element, "showLabel", true)) {
+            var labelRow = el("div", "cmp-label-row");
+            var label = el("div", "cmp-label");
+            var lFit = fitSpan(label);
+            setFit(lFit, slot.label, true);
+            labelRow.appendChild(label);
+            rowsRoot.appendChild(labelRow);
+          }
+        });
+
+        engine.content.textContent = "";
+        engine.content.appendChild(rowsRoot);
+        engine.body.classList.toggle("is-blank", !order.length);
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.2 排行榜 --------------------------------------------------------
+
+  function buildLeaderBoard() {
+    var engine = null;
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "排行榜");
+        }
+        var board = boardHeader(engine, element, s, "排行榜");
+        var rows = boardRows(board, element);
+        var sort = option(element, "sort", "desc");
+        if (sort !== "none") {
+          rows = rows.slice().sort(function (a, b) {
+            return sort === "asc" ? a.value - b.value : b.value - a.value;
+          });
+        }
+        var showRank = optionBool(element, "showRank", true);
+        var lead = optionNum(element, "highlight", 3);
+
+        engine.content.textContent = "";
+        if (showRank) {
+          var head = el("div", "tbl-head");
+          head.appendChild(el("div", "tbl-cell-rank"));
+          var nameCell = el("div", "tbl-cell-name");
+          nameCell.textContent = option(element, "nameLabel", "选手");
+          head.appendChild(nameCell);
+          var valueCell = el("div", "tbl-cell-value");
+          valueCell.textContent = option(element, "valueLabel", "数值");
+          head.appendChild(valueCell);
+          engine.content.appendChild(head);
+        }
+
+        rows.forEach(function (m, index) {
+          var row = el("div", "tbl-row" + (index < lead ? " is-lead" : ""));
+          var rank = el("div", "tbl-rank num");
+          setText(rank, String(index + 1));
+          rank.hidden = !showRank;
+          var name = el("div", "tbl-name");
+          var nameFit = fitSpan(name);
+          setFit(nameFit, m.label || m.key);
+          var value = el("div", "tbl-value");
+          var valueFit = fitSpan(value);
+          setFit(valueFit, metricText(m));
+          var nameCell = el("div", "tbl-cell-name");
+          var sub = option(element, "sub", "");
+          if (m.sub || sub) {
+            var subEl = el("div", "tbl-sub");
+            var subFit = fitSpan(subEl);
+            setFit(subFit, m.sub || sub);
+            nameCell.appendChild(name);
+            nameCell.appendChild(subEl);
+          } else {
+            nameCell.appendChild(name);
+          }
+          row.appendChild(rank);
+          row.appendChild(nameCell);
+          row.appendChild(value);
+          if (m.side) {
+            var side = sideById(s, m.side);
+            if (side) setVar(row, "--el-accent", side.color);
+          }
+          engine.content.appendChild(row);
+        });
+
+        engine.body.classList.toggle("is-blank", !rows.length);
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.3 趋势曲线 ------------------------------------------------------
+
+  /* 两条序列（主/客）随时间变化。数据来源有两种，都支持：
+       * 状态里每一侧自己的 series 数组
+       * 一块看板，rows 按 side 分组，按数组顺序连接
+     两种都映射到同一张"每侧一条折线"的图上，所以调用方怎么喂都能出图。 */
+  function buildSeriesChart() {
+    var engine = null;
+    var NS = "http://www.w3.org/2000/svg";
+
+    function p(values, w, h, min, max) {
+      var span = max - min || 1;
+      return values.map(function (v, i) {
+        var x = values.length <= 1 ? 0 : (i / (values.length - 1)) * w;
+        var y = h - ((v - min) / span) * h;
+        return [x, y];
+      });
+    }
+
+    function pathOf(points, closePath) {
+      if (!points.length) return "";
+      var d = "M" + points[0][0].toFixed(2) + " " + points[0][1].toFixed(2);
+      for (var i = 1; i < points.length; i++) {
+        d += " L" + points[i][0].toFixed(2) + " " + points[i][1].toFixed(2);
+      }
+      if (closePath) {
+        d += " L" + points[points.length - 1][0].toFixed(2) + " " + 0 +
+             " L" + points[0][0].toFixed(2) + " 0 Z";
+      }
+      return d;
+    }
+
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "趋势");
+          var legend = el("div", "chart-legend");
+          var plot = el("div", "chart-plot");
+          var svg = svgEl("svg");
+          svg.setAttribute("preserveAspectRatio", "none");
+          svg.setAttribute("viewBox", "0 0 100 100");
+          plot.appendChild(svg);
+          var axis = el("div", "chart-axis");
+          engine.content.appendChild(legend);
+          engine.content.appendChild(plot);
+          engine.content.appendChild(axis);
+          engine.legend = legend;
+          engine.plot = plot;
+          engine.svg = svg;
+          engine.axis = axis;
+        }
+        var board = boardHeader(engine, element, s, "趋势");
+
+        var ha = homeAway(s);
+        var series = [[], []];
+        if (board && board.rows && board.rows.length) {
+          board.rows.forEach(function (m) {
+            if (!m.series || !m.series.length) return;
+            var slot = 0;
+            if (ha[1] && m.side === ha[1].id) slot = 1;
+            else if (ha[0] && m.side === ha[0].id) slot = 0;
+            series[slot] = series[slot].concat(m.series);
+          });
+        } else {
+          series[0] = (ha[0] && ha[0].series) || [];
+          series[1] = (ha[1] && ha[1].series) || [];
+        }
+
+        var window_ = optionNum(element, "window", 0);
+        if (window_ > 0) {
+          series = series.map(function (values) {
+            return values.slice(Math.max(0, values.length - window_));
+          });
+        }
+
+        var all = series[0].concat(series[1]).filter(function (v) { return isFinite(v); });
+        if (!all.length) {
+          engine.body.classList.add("is-blank");
+          this.body = engine.body;
+          return;
+        }
+        engine.body.classList.remove("is-blank");
+
+        var min = optionNum(element, "min", NaN);
+        var max = optionNum(element, "max", NaN);
+        if (!isFinite(min)) min = Math.min.apply(null, all);
+        if (!isFinite(max)) max = Math.max.apply(null, all);
+        if (min === max) { max = min + 1; }
+        var pad = (max - min) * 0.12;
+        min -= pad; max += pad;
+
+        var showArea = optionBool(element, "area", true);
+        engine.svg.textContent = "";
+        var gridLines = 3;
+        for (var g = 0; g <= gridLines; g++) {
+          var line = svgEl("line", "chart-grid-line");
+          var y = (g / gridLines) * 100;
+          line.setAttribute("x1", "0"); line.setAttribute("x2", "100");
+          line.setAttribute("y1", y.toFixed(2)); line.setAttribute("y2", y.toFixed(2));
+          engine.svg.appendChild(line);
+        }
+        if (min < 0 && max > 0) {
+          var zero = svgEl("line", "chart-zero");
+          var zy = 100 - ((0 - min) / (max - min)) * 100;
+          zero.setAttribute("x1", "0"); zero.setAttribute("x2", "100");
+          zero.setAttribute("y1", zy.toFixed(2)); zero.setAttribute("y2", zy.toFixed(2));
+          engine.svg.appendChild(zero);
+        }
+
+        [0, 1].forEach(function (slot) {
+          var values = series[slot].filter(function (v) { return isFinite(v); });
+          if (!values.length) return;
+          var points = p(values, 100, 100, min, max);
+          var cls = slot === 0 ? "home" : "away";
+          if (showArea) {
+            var area = svgEl("path", "chart-area-" + cls);
+            area.setAttribute("d", pathOf(points, true));
+            engine.svg.appendChild(area);
+          }
+          var path = svgEl("path", "chart-line-" + cls);
+          path.setAttribute("d", pathOf(points, false));
+          engine.svg.appendChild(path);
+          var dot = svgEl("circle", "chart-dot is-" + cls);
+          var last = points[points.length - 1];
+          dot.setAttribute("cx", last[0].toFixed(2));
+          dot.setAttribute("cy", last[1].toFixed(2));
+          engine.svg.appendChild(dot);
+        });
+
+        // 图例：色块 + 队名 + 当前值。名和值都给，因为只有色块的话色盲观众
+        // 就只剩两条线。
+        engine.legend.textContent = "";
+        [0, 1].forEach(function (slot) {
+          var side = ha[slot];
+          if (!side) return;
+          var item = el("span", "lg-item");
+          item.appendChild(el("i", "lg-swatch is-" + (slot === 0 ? "home" : "away")));
+          var label = el("span", "fit");
+          setFit(label, side.short || side.name, true);
+          item.appendChild(label);
+          var values = series[slot].filter(function (v) { return isFinite(v); });
+          if (values.length) {
+            var value = el("span", "lg-value");
+            setText(value, formatNumber(values[values.length - 1]));
+            item.appendChild(value);
+          }
+          engine.legend.appendChild(item);
+        });
+
+        engine.axis.textContent = "";
+        var axisText = option(element, "axis", "");
+        var parts = axisText ? axisText.split("|") : ["起", "终"];
+        parts.forEach(function (text) {
+          var span = el("span", "fit");
+          setText(span, text);
+          engine.axis.appendChild(span);
+        });
+
+        var height = optionNum(element, "height", 0);
+        engine.plot.style.height = height ? px(height) : "";
+
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.4 关键指标磁贴 --------------------------------------------------
+
+  function buildKpiTiles() {
+    var engine = null;
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "关键数据");
+          engine.tiles = el("div", "tiles");
+          engine.content.appendChild(engine.tiles);
+        }
+        boardHeader(engine, element, s, "关键数据");
+        var cols = Math.max(1, Math.min(6, Math.round(optionNum(element, "cols", 3))));
+        setVar(engine.tiles, "--tile-cols", String(cols));
+        var rows = boardRows(boardFor(element, s), element);
+
+        engine.tiles.textContent = "";
+        rows.forEach(function (m) {
+          var tile = el("div", "tile");
+          if (m.side) {
+            var side = sideById(s, m.side);
+            if (side) setVar(tile, "--el-accent", side.color);
+          }
+          var label = el("div", "tile-label");
+          var labelFit = fitSpan(label);
+          setFit(labelFit, m.label || m.key, true);
+          var valueRow = el("div", "tile-value");
+          var valueFit = fitSpan(valueRow);
+          setFit(valueFit, metricText(m));
+          if (m.unit || option(element, "unit", "")) {
+            var unit = el("span", "tile-unit");
+            setText(unit, m.unit || option(element, "unit", ""));
+            valueRow.appendChild(unit);
+          }
+          tile.appendChild(label);
+          tile.appendChild(valueRow);
+          if (isFinite(m.delta) && m.delta !== 0) {
+            var delta = el("div", "tile-delta " + (m.delta > 0 ? "is-up" : "is-down"));
+            setText(delta, (m.delta > 0 ? "▲ " : "▼ ") + formatNumber(Math.abs(m.delta)));
+            tile.appendChild(delta);
+          }
+          engine.tiles.appendChild(tile);
+        });
+
+        engine.body.classList.toggle("is-blank", !rows.length);
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.5 阵容卡 --------------------------------------------------------
+
+  function buildRosterCard() {
+    var engine = null;
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "");
+          // A line-up reads a side, not a data table, so it swaps the generic
+          // heading for its own team-coloured one.
+          engine.body.removeChild(engine.head);
+          engine.head = el("div", "roster-head");
+          var code = el("span", "roster-code");
+          var codeFit = fitSpan(code);
+          var name = el("div", "roster-name");
+          var nameFit = fitSpan(name);
+          engine.head.appendChild(code);
+          engine.head.appendChild(name);
+          engine.grid = el("div", "roster-grid");
+          engine.body.insertBefore(engine.head, engine.body.firstChild);
+          engine.body.appendChild(engine.grid);
+          engine.codeFit = codeFit;
+          engine.nameFit = nameFit;
+        }
+        // The roster reads a side, not a table, so it has its own heading.
+        // boardShell 建出来的那个通用 head 在下面被换掉了。
+
+        var side = sideById(s, option(element, "side", "")) || s.sides[0] || null;
+        if (!side) {
+          engine.body.classList.add("is-blank");
+          this.body = engine.body;
+          return;
+        }
+        engine.body.classList.remove("is-blank");
+        setFit(engine.codeFit, option(element, "title", "") || side.short || side.name, true);
+        setFit(engine.nameFit, option(element, "subtitle", "") || side.name);
+        setVar(engine.body, "--team", side.color);
+        setVar(engine.body, "--team-dim", rgba(side.color, 0.16) || "rgba(255,255,255,0.06)");
+
+        var cols = Math.max(1, Math.min(8, Math.round(optionNum(element, "cols", 5))));
+        setVar(engine.grid, "--roster-cols", String(cols));
+        var limit = optionNum(element, "maxRows", 0);
+
+        var players = side.competitors.slice();
+        if (limit > 0) players = players.slice(0, limit);
+
+        engine.grid.textContent = "";
+        players.forEach(function (p) {
+          var cell = el("div", "roster-player");
+          var number = el("div", "rp-number");
+          var numberFit = fitSpan(number);
+          setFit(numberFit, p.number);
+          number.hidden = !p.number;
+          var name = el("div", "rp-name");
+          var nameFit = fitSpan(name);
+          setFit(nameFit, p.name, element.style && element.style.uppercase);
+          cell.appendChild(number);
+          cell.appendChild(name);
+          engine.grid.appendChild(cell);
+        });
+
+        engine.body.classList.toggle("is-blank", !players.length);
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.6 局分板 --------------------------------------------------------
+
+  function buildSeriesScore() {
+    var engine = null;
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "赛程");
+          engine.list = el("div", "series-list");
+          engine.tally = el("div", "series-tally");
+          engine.content.appendChild(engine.list);
+          engine.content.appendChild(engine.tally);
+        }
+        var board = boardHeader(engine, element, s, "赛程");
+        var rows = boardRows(board, element);
+
+        var ha = homeAway(s);
+        engine.list.textContent = "";
+        rows.forEach(function (m, index) {
+          var state_ = (m.state || "").toLowerCase();
+          var game = el("div", "series-game"
+            + (state_ === "live" ? " is-live" : "")
+            + (state_ === "done" ? " is-done" : ""));
+          var idx = el("div", "sg-index");
+          var idxFit = fitSpan(idx);
+          setFit(idxFit, m.index || ("G" + (index + 1)), true);
+          var map = el("div", "sg-map");
+          var mapFit = fitSpan(map);
+          setFit(mapFit, m.label || m.key);
+          var score = el("div", "sg-score num");
+          var scoreFit = fitSpan(score);
+          setFit(scoreFit, metricText(m));
+          game.appendChild(idx);
+          game.appendChild(map);
+          game.appendChild(score);
+          engine.list.appendChild(game);
+        });
+
+        engine.tally.textContent = "";
+        if (ha[0] && ha[1]) {
+          var homeLead = ha[0].score > ha[1].score;
+          var awayLead = ha[1].score > ha[0].score;
+          var hName = el("div", "series-tally-side is-home" + (homeLead ? " is-lead" : ""));
+          var hFit = fitSpan(hName);
+          setFit(hFit, ha[0].short || ha[0].name, true);
+          var score = el("div", "series-tally-score num");
+          setText(score, ha[0].score + " : " + ha[1].score);
+          var aName = el("div", "series-tally-side is-away" + (awayLead ? " is-lead" : ""));
+          var aFit = fitSpan(aName);
+          setFit(aFit, ha[1].short || ha[1].name, true);
+          engine.tally.appendChild(hName);
+          engine.tally.appendChild(score);
+          engine.tally.appendChild(aName);
+        }
+        engine.tally.hidden = !ha[0] || !ha[1];
+        engine.body.classList.toggle("is-blank", !rows.length && engine.tally.hidden);
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.7 事件时间轴 ----------------------------------------------------
+
+  function buildTimeline() {
+    var engine = null;
+    return {
+      body: null,
+      update: function (s, element) {
+        if (!engine) {
+          engine = boardShell(element, s, "时间轴");
+          engine.track = el("div", "tl-track");
+          engine.content.appendChild(engine.track);
+        }
+        boardHeader(engine, element, s, "时间轴");
+        var rows = boardRows(boardFor(element, s), element);
+        if (option(element, "order", "desc") === "desc") rows = rows.slice().reverse();
+
+        engine.track.textContent = "";
+        rows.forEach(function (m) {
+          var item = el("div", "tl-item");
+          var time = el("div", "tl-time");
+          var timeFit = fitSpan(time);
+          setFit(timeFit, m.time || m.key);
+          var dot = el("span", "tl-dot");
+          if (m.side) {
+            var side = sideById(s, m.side);
+            if (side) setVar(dot, "--tl-colour", side.color);
+          }
+          var text = el("div", "tl-text");
+          var textFit = fitSpan(text);
+          setFit(textFit, m.label || m.display || m.key);
+          item.appendChild(time);
+          item.appendChild(dot);
+          item.appendChild(text);
+          engine.track.appendChild(item);
+        });
+
+        engine.body.classList.toggle("is-blank", !rows.length);
+        this.body = engine.body;
+      }
+    };
+  }
+
+  // ---- 4.8 对阵卡 --------------------------------------------------------
+
+  function buildHeadToHead() {
+    var body = el("div", "el-body h2h");
+    var sides = [el("div", "h2h-side is-home"), el("div", "h2h-side is-away")];
+    var fits = [];
+    sides.forEach(function (node) {
+      var code = el("div", "h2h-code");
+      var codeFit = fitSpan(code);
+      var name = el("div", "h2h-name");
+      var nameFit = fitSpan(name);
+      var record = el("div", "h2h-record");
+      var recordFit = fitSpan(record);
+      node.appendChild(code);
+      node.appendChild(name);
+      node.appendChild(record);
+      fits.push({ code: codeFit, name: nameFit, record: recordFit });
+    });
+    var vs = el("div", "h2h-vs");
+    var vsText = el("div", "h2h-vs-text");
+    var vsFit = fitSpan(vsText);
+    var vsSub = el("div", "h2h-vs-sub");
+    var vsSubFit = fitSpan(vsSub);
+    vs.appendChild(vsText);
+    vs.appendChild(vsSub);
+    body.appendChild(sides[0]);
+    body.appendChild(vs);
+    body.appendChild(sides[1]);
+
+    return {
+      body: body,
+      update: function (s, element) {
+        var ha = homeAway(s);
+        var shown = 0;
+        [0, 1].forEach(function (slot) {
+          var side = ha[slot];
+          var node = sides[slot];
+          if (!side) { node.hidden = true; return; }
+          node.hidden = false;
+          shown++;
+          setFit(fits[slot].code, side.short || side.name, true);
+          setFit(fits[slot].name, side.name);
+          var record = side.record || "";
+          setFit(fits[slot].record, record, true);
+          fits[slot].record.parentNode.hidden = !record;
+          setVar(node, "--team", side.color);
+          setVar(node, "--team-dim", rgba(side.color, 0.16) || "rgba(255,255,255,0.06)");
+        });
+        setFit(vsFit, option(element, "vs", "VS"), true);
+        setFit(vsSubFit, option(element, "subtitle", "") || (s.event.stage || ""), true);
+        vsSub.hidden = !vsSubFit.__text;
+        body.classList.toggle("is-blank", shown < 2);
+      }
+    };
+  }
+
+  // ---- 注册表 ------------------------------------------------------------
 
   var BUILDERS = {
     matchBug: buildMatchBug,
@@ -568,10 +1493,20 @@
     ticker: buildTicker,
     announcement: buildAnnouncement,
     frame: buildFrame,
-    text: buildText
+    text: buildText,
+    statCompare: buildStatCompare,
+    leaderBoard: buildLeaderBoard,
+    seriesChart: buildSeriesChart,
+    kpiTiles: buildKpiTiles,
+    rosterCard: buildRosterCard,
+    seriesScore: buildSeriesScore,
+    timeline: buildTimeline,
+    headToHead: buildHeadToHead
   };
 
-  // ---- layout -------------------------------------------------------------
+  // ==========================================================================
+  // 5. 版面
+  // ==========================================================================
 
   function anchorIsRight(anchor) { return anchor === "topRight" || anchor === "bottomRight"; }
   function anchorIsBottom(anchor) { return anchor === "bottomLeft" || anchor === "bottomRight"; }
@@ -585,25 +1520,31 @@
     }
   }
 
-  /* The width, in design pixels, each element type is designed at.
+  /* 每种元素被设计时的宽度（设计像素）。
 
-     An element the document gives an explicit width to is scaled by
-     (its width / this), so resizing a box scales the type, the padding and the
-     dots inside it together instead of leaving fixed-size text in a bigger box.
-     An element left at width 0 is content-sized, so there is nothing to fit into
-     and the ratio is 1.
+     文档给了明确宽度的元素，按 (它的宽度 / 这个数) 整体缩放，所以把框拉宽会
+     带着字号、内边距、圆点一起变大，而不是在大框里留一堆小字。
+     宽度留 0 的元素是内容自适应，没有可适配的比例，比例就是 1。
 
-     These must equal Panels.naturalWidth() in the mod, which is what the in-game
-     HUD divides by. Two renderers, one set of numbers. */
+     这些数必须等于 mod 里的 ElementMetrics.referenceWidth()，因为游戏内 HUD
+     除的就是同一个数。两个渲染器，一套数字。 */
   var REFERENCE_WIDTH = {
-    matchBug: 346,
+    matchBug: 348,
     eventInfo: 432,
-    timer: 260,
+    timer: 264,
     lowerThird: 768,
     ticker: 1920,
     announcement: 0,
     frame: 0,
-    text: 0
+    text: 0,
+    statCompare: 420,
+    leaderBoard: 360,
+    seriesChart: 430,
+    kpiTiles: 480,
+    rosterCard: 520,
+    seriesScore: 360,
+    timeline: 380,
+    headToHead: 560
   };
 
   function boxRatio(element) {
@@ -622,31 +1563,34 @@
 
   var stage = document.getElementById("stage");
 
-  /** Applies the document's palette to the page. */
+  /** 把文档的调色板写到页面上。 */
   function applyTheme(theme) {
     var fallback = {
-      accent: "#FFC24B", live: "#FF4D4D", ink: "#F2F4F8", inkDim: "#9AA4B2",
-      panelTop: "#1A2030E6", panelBottom: "#0C1018F0", border: "#FFFFFF40",
+      accent: "#FFC24B", live: "#FF4D4D", ink: "#F4F6FA", inkDim: "#A4AEBD",
+      panelTop: "#171D2AEB", panelBottom: "#0A0E16F5", border: "#FFFFFF24",
       home: "#4C9AFF", away: "#FF6B6B", font: ""
     };
     var t = theme || {};
     var root = document.documentElement;
-    root.style.setProperty("--accent", color(t.accent, fallback.accent));
+    var accent = color(t.accent, fallback.accent);
+    var ink = color(t.ink, fallback.ink);
+
+    root.style.setProperty("--accent", accent);
     root.style.setProperty("--live", color(t.live, fallback.live));
-    root.style.setProperty("--ink", color(t.ink, fallback.ink));
+    root.style.setProperty("--ink", ink);
     root.style.setProperty("--ink-dim", color(t.inkDim, fallback.inkDim));
     root.style.setProperty("--home", color(t.home, fallback.home));
     root.style.setProperty("--away", color(t.away, fallback.away));
-    root.style.setProperty("--panel-top", color(t.panelTop, fallback.panelTop));
-    root.style.setProperty("--panel-bottom", color(t.panelBottom, fallback.panelBottom));
-    root.style.setProperty("--panel-border", color(t.border, fallback.border));
+    root.style.setProperty("--panel-top", rgbaOf(t.panelTop) || fallback.panelTop);
+    root.style.setProperty("--panel-bottom", rgbaOf(t.panelBottom) || fallback.panelBottom);
+    root.style.setProperty("--panel-border", rgbaOf(t.border) || fallback.border);
+    root.style.setProperty("--panel-edge", rgbaOf(t.border) || fallback.border);
 
-    // The decorative washes are derived from the accent rather than baked in,
-    // so a restyle does not leave amber glows on a blue package.
-    var accent = color(t.accent, fallback.accent);
+    // 装饰性的色晕由强调色推导，而不是写死 —— 否则换一套配色，画面上还留着
+    // 上一套的琥珀色光。
     root.style.setProperty("--accent-soft", rgba(accent, 0.22) || "rgba(255,194,75,0.22)");
     root.style.setProperty("--accent-mid", rgba(accent, 0.8) || "rgba(255,194,75,0.8)");
-    root.style.setProperty("--accent-tint", rgba(accent, 0.16) || "rgba(255,194,75,0.16)");
+    root.style.setProperty("--accent-tint", rgba(accent, 0.14) || "rgba(255,194,75,0.14)");
 
     if (t.font) {
       root.style.setProperty("--font-ui", t.font + ", " + fallbackFont());
@@ -659,7 +1603,28 @@
     return 'ui-sans-serif, system-ui, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif';
   }
 
-  /** Reconciles the mounted elements against the document. */
+  /** 元素自己的样式覆盖。null 表示继承主题 —— 这个区别很重要，否则改一次主题
+      会被一堆"恰好和主题同色"的元素钉死。 */
+  function applyElementStyle(body, element) {
+    var style = element.style || {};
+    if (style.accent && COLOR_RE.test(style.accent)) setVar(body, "--el-accent", style.accent);
+    else clearVar(body, "--el-accent");
+    if (style.ink && COLOR_RE.test(style.ink)) setVar(body, "--ink", style.ink);
+    else clearVar(body, "--ink");
+    if (style.panel && COLOR_RE.test(style.panel)) {
+      var panel = rgbaOf(style.panel) || style.panel;
+      var solid = rgba(style.panel, 0.94);
+      setVar(body, "--panel-top", panel);
+      setVar(body, "--panel-bottom", solid || panel);
+    } else {
+      clearVar(body, "--panel-top");
+      clearVar(body, "--panel-bottom");
+    }
+    setVar(body, "--el-accent-tint",
+      rgba(color(style.accent, "#FFC24B"), 0.14) || "rgba(255,194,75,0.14)");
+  }
+
+  /** 把当前挂载的元素和文档对齐。 */
   function applyLayout(next) {
     if (!next || typeof next !== "object") return;
     if (!next.canvas || !isFinite(next.canvas.width) || !isFinite(next.canvas.height)) return;
@@ -677,19 +1642,18 @@
       mounted.forEach(function (entry) {
         var element = next.elements.filter(function (e) { return e && e.id === entry.id; })[0];
         entry.element = element;
-        // Assigning an identical className is not reliably free: some engines
-        // restart a running animation on it, which would replay every entrance
-        // each time the editor moved something.
-        var classes = "el-body " + baseClass(entry.type) + enterClass(element) + extraClass(entry.type);
+        // 赋一个完全相同的 className 不一定免费：某些引擎会因此重放正在跑的
+        // 动画，那样编辑器每挪一下都会把入场动画重播一遍。
+        var classes = "el-body " + baseClass(entry.type) + enterClass(element) + typeClass(element);
         if (entry.body.className !== classes) entry.body.className = classes;
         entry.body.style.setProperty("--enter-ms", enterMs(element));
         entry.body.style.setProperty("--enter-ease", enterEase(element));
+        applyElementStyle(entry.body, element);
+        if (entry.component.layout) entry.component.layout(element);
       });
     }
 
-    // One call does the rest: show what this document and scene put on air,
-    // write the match data into it, then place it against the content that just
-    // landed.
+    // 一次调用做完全部：按场景显示、把数据写进去、然后按刚落位的内容摆位。
     updateState();
   }
 
@@ -699,22 +1663,24 @@
     }).join("|");
   }
 
-  /** A stable per-type class string, so a stylesheet can target a type. */
+  /** 每种类型一个稳定的类名，样式表可以针对类型写规则。 */
   function baseClass(type) {
     switch (type) {
-      case "matchBug": return "panel panel-bug";
-      case "eventInfo": return "panel panel-event";
-      case "timer": return "panel panel-timer";
-      case "lowerThird": return "panel panel-lower";
+      case "matchBug": return "bug";
+      case "eventInfo": return "event-card";
+      case "timer": return "timer-card";
+      case "lowerThird": return "lower";
       case "ticker": return "ticker";
       case "announcement": return "announce";
       case "frame": return "frame";
-      case "text": return "bound-text clip";
-      default: return "";
+      case "text": return "bound-text";
+      default: return BUILDERS[type] ? "board board-" + type : "";
     }
   }
 
-  function extraClass() { return ""; }
+  /* 看板类的元素，body 由构造器自己造（boardShell 才知道标题），
+     所以 rebuild 时要把它捡回来，而不是覆盖掉。 */
+  function typeClass() { return ""; }
 
   function enterClass(element) {
     var enter = element && element.anim ? element.anim.enter : "fade";
@@ -736,6 +1702,7 @@
       if (entry.node.parentNode) entry.node.parentNode.removeChild(entry.node);
     });
     mounted = [];
+    fitQueue = [];
 
     (layout.elements || []).forEach(function (element) {
       if (!element || !element.type) return;
@@ -745,28 +1712,54 @@
         return;
       }
       var built = builder(element);
-      built.body.className = "el-body " + baseClass(element.type) + enterClass(element) + extraClass(element.type);
-      built.body.style.setProperty("--enter-ms", enterMs(element));
-      built.body.style.setProperty("--enter-ease", enterEase(element));
+      // 看板构造器在第一次 update 时才建好 body，这里先给一个占位。
+      var body = built.body || el("div", "board board-" + element.type);
+      body.className = "el-body " + baseClass(element.type) + enterClass(element);
+      body.style.setProperty("--enter-ms", enterMs(element));
+      body.style.setProperty("--enter-ease", enterEase(element));
+      applyElementStyle(body, element);
+      if (built.layout) built.layout(element);
+      if (!built.body) built.body = body;
 
       var node = el("div", "el");
       node.setAttribute("data-id", element.id);
       node.setAttribute("data-type", element.type);
-      node.appendChild(built.body);
+      node.appendChild(body);
 
       stage.appendChild(node);
-      mounted.push({
+      var entry = {
         id: element.id,
         type: element.type,
         node: node,
-        body: built.body,
+        body: body,
         component: built,
-        element: element
-      });
+        element: element,
+        fits: []
+      };
+      mounted.push(entry);
+    });
+
+    mounted.forEach(function (entry) {
+      entry.fits = entry.node.querySelectorAll(".fit");
     });
   }
 
-  /** One design pixel of the 1920x1080 canvas, in CSS pixels. */
+  /* 看板构造器在第一次 update 时才建自己的 body（那时才知道标题和数据源）。
+     挂载时先给了一个占位节点，这里把占位节点上的类名和行内变量整体搬过去，
+     否则 --enter-ms / --origin / --el-accent 这些会在换节点的一瞬间丢掉，
+     表现就是"看板不进场、也不跟随主题配色"。 */
+  function syncBoardBody(entry) {
+    var built = entry.component;
+    if (built.body && built.body !== entry.body) {
+      built.body.className = entry.body.className;
+      built.body.style.cssText = entry.body.style.cssText;
+      entry.body = built.body;
+      while (entry.node.firstChild) entry.node.removeChild(entry.node.firstChild);
+      entry.node.appendChild(entry.body);
+    }
+  }
+
+  /** 1920x1080 设计画布上的一个设计像素，等于多少 CSS 像素。 */
   function setUnit() {
     var next = Math.min(
       window.innerWidth / layout.canvas.width,
@@ -775,9 +1768,10 @@
     if (Math.abs(next - unit) < 0.0005) return;
     unit = next;
     document.documentElement.style.setProperty("--u", unit + "px");
+    markAllDirty();
   }
 
-  /** Shows or hides each element for the current scene. */
+  /** 按当前场景决定每个元素是否上播。 */
   function applyVisibility(scene) {
     mounted.forEach(function (entry) {
       var element = entry.element;
@@ -785,14 +1779,13 @@
     });
   }
 
-  /** Where an element goes, mirroring Anchor.place in the mod. */
+  /** 元素放在哪，和 mod 里 Anchor.place 一一对应。 */
   function position() {
     var canvasW = layout.canvas.width;
     var canvasH = layout.canvas.height;
 
-    // The ticker reserves the bottom edge, so bottom-anchored elements sit above
-    // it rather than on top of it. Measured first, because the timer's position
-    // depends on it.
+    // 信息条占据底边，所以底部锚定的元素要落在它上面而不是压在它上面。
+    // 先量它，因为计时器的位置取决于它。
     var reserve = tickerReserve(state ? state.scene : "full");
     tickerOn = reserve > 0;
     document.body.classList.toggle("ticker-on", tickerOn);
@@ -806,9 +1799,8 @@
         return;
       }
 
-      // The natural size is what the element measures at design scale: the CSS
-      // already multiplied every length by --u, so dividing by it recovers the
-      // document's own units.
+      // 自然尺寸就是元素在设计尺度下量出来的尺寸：CSS 已经把每个长度乘过
+      // --u，除回去就还原成文档自己的单位。
       var naturalW = entry.body.offsetWidth / unit;
       var naturalH = entry.body.offsetHeight / unit;
 
@@ -818,6 +1810,8 @@
       else entry.node.style.removeProperty("width");
       if (element.height > 0) entry.node.style.height = px(element.height);
       else entry.node.style.removeProperty("height");
+      // 显式给了高度就把内容铺满，否则 header/body 的 flex 需要它。
+      entry.body.style.height = element.height > 0 ? "100%" : "";
 
       var scale = effectiveScale(element);
       var anchor = element.anchor || "topLeft";
@@ -827,8 +1821,7 @@
 
       var scaledW = boxW * scale;
       var scaledH = boxH * scale;
-      var left;
-      var top;
+      var left, top;
       if (anchor === "center") {
         left = (canvasW - scaledW) / 2 + marginX;
         top = (canvasH - scaledH) / 2 + marginY;
@@ -842,22 +1835,20 @@
       node.style.top = px(top);
       node.style.transform = "scale(" + scale + ")";
       node.style.zIndex = String(mounted.indexOf(entry) + 1);
-      // The element scales about its own top-left, so it grows rightward and
-      // downward from the corner the placement put it at; the entrance animation
-      // is what scales about the element's pinned corner.
-      // The box ratio drives every length inside the element through --uk, so a
-      // resized box takes its text with it.
+      // 元素绕自己的锚角缩放，所以它从摆放的那个角往右、往下长；入场动画
+      // 也是绕元素被钉住的角缩放的。
+      // 盒比例通过 --uk 驱动元素内每一个长度，所以框改大，里面的字跟着大。
       entry.body.style.setProperty("--origin", anchorOrigin(anchor));
       node.style.setProperty("--k", String(boxRatio(element)));
       entry.body.style.setProperty("--el-opacity", String(element.opacity === undefined ? 1 : element.opacity));
     });
 
-    // Measured now rather than on the next frame, so a ticker that has just
-    // appeared does not paint one frame at the wrong width.
+    // 现在就量，而不是等下一帧：刚出现的跑马灯不能先按错误宽度画一帧。
     mounted.forEach(function (entry) {
       if (entry.type === "ticker" && !entry.node.hidden && entry.component.remeasure) {
         entry.component.remeasure();
       }
+      entry.fits = entry.node.querySelectorAll(".fit");
     });
   }
 
@@ -870,7 +1861,7 @@
     node.style.height = px(layout.canvas.height);
     node.style.transform = "none";
     node.style.zIndex = "0";
-    // The frame is the document's own inset, plus whatever the element adds.
+    // 安全框画的是文档自己的内缩，加上元素额外加的那一份。
     entry.body.style.setProperty("--frame-inset",
       px((safe.x || 0) + (element.x || 0)));
     entry.body.style.setProperty("--frame-bottom", tickerOn
@@ -884,12 +1875,12 @@
     return Math.max(0.05, Math.min(16, scale));
   }
 
-  /** How tall the ticker is, in design pixels. 0 when it is not on air. */
+  /** 信息条有多高（设计像素）。不在播就是 0。 */
   function tickerReserve(scene) {
     var element = firstOfType("ticker");
     if (!element || element.visible === false || !sceneAllows(element, scene)) return 0;
     if (!state || !state.ticker.length) return 0;
-    return element.height > 0 ? element.height : 53;
+    return element.height > 0 ? element.height : 54;
   }
 
   function firstOfType(type) {
@@ -903,39 +1894,44 @@
   function sceneAllows(element, scene) {
     var scenes = element.scenes;
     if (!scenes || !scenes.length) return true;
-    // An unknown scene reads as the fullest one rather than as "nothing shows",
-    // so a typo cannot blank the whole package.
+    // 未知场景按最全的那个处理，而不是"什么都不显示"，这样一个拼写错误
+    // 不会让整套包装黑屏。
     var wanted = ["full", "compact", "minimal"].indexOf(scene) >= 0 ? scene : "full";
     return scenes.indexOf(wanted) >= 0;
   }
 
   function updateState() {
+    // 状态可能比版面先到（SSE 两条流是独立的）。没有版面就没有几何可算，
+    // 直接返回；版面一到 applyLayout 会再调一次。不挡这一下，position()
+    // 会在 layout 为 null 时崩，而那是"直播中随机报错"里最难查的一种。
+    if (!layout) return;
     var s = stateOrDefault();
 
-    // Visibility first: a component that is off air must not be updated, and one
-    // that is about to appear must have its markup in place before it is
-    // measured.
+    // 先定可见性：下播的组件不该被更新，而要上播的必须在被量之前就已经
+    // 有标记。
     applyVisibility(s.scene);
 
     mounted.forEach(function (entry) {
       if (entry.node.hidden) return;
       try {
         entry.component.update(s, entry.element);
+        syncBoardBody(entry);
       } catch (e) {
-        log("元素 " + entry.id + " 渲染失败：" + e.message);
+        log("元素 " + entry.id + " 渲染失败：" + (e && e.message ? e.message : e));
       }
     });
 
-    // Then the geometry, and always. An element whose width is "as large as the
-    // content needs" changes size when the content does — a clock going from
-    // 00:00 to 128:45, a team name getting longer — and a right- or
-    // bottom-anchored element measured before that change moves its far edge off
-    // the screen. Repositioning after every update is what keeps `width: 0` from
-    // being a trap.
+    // 再算几何，而且每次都要算。宽度为"内容需要多大就多大"的元素，内容一变
+    // 尺寸就变（计时从 00:00 走到 128:45、队名变长），而在那之前量过的右锚 /
+    // 底锚元素会把它的远边推出屏幕。每次更新后重新定位，才让 width:0 不是
+    // 一个陷阱。
     position();
+    flushFit();
   }
 
-  // ---- state normalisation ------------------------------------------------
+  // ==========================================================================
+  // 6. 状态规整
+  // ==========================================================================
 
   function toStr(v) {
     if (v === null || v === undefined) return "";
@@ -952,9 +1948,7 @@
   }
 
   function toArr(v) { return Array.isArray(v) ? v : []; }
-
   function toBool(v) { return v === true || v === "true" || v === 1; }
-
   function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
 
   var DEFAULT_COLORS = ["#4C9AFF", "#FF6B6B"];
@@ -964,9 +1958,11 @@
     return {
       id: toStr(o.id) || ("side" + index),
       name: toStr(o.name),
-      short: toStr(o.short),
+      short: toStr(o.short) || toStr(o.shortName),
       color: color(o.color, DEFAULT_COLORS[index] || "#7E8AA0"),
       score: toNum(o.score, 0),
+      record: toStr(o.record),
+      series: toArr(o.series).map(function (v) { return toNum(v, 0); }),
       competitors: toArr(o.competitors).map(function (c) {
         var co = (c && typeof c === "object") ? c : {};
         return { name: toStr(co.name), number: toStr(co.number) };
@@ -974,16 +1970,42 @@
     };
   }
 
-  /* Top-level keys holding small objects. A partial event like
-     {"announcement":{"visible":false}} is merged a level deeper so it cannot
-     blank the title it did not mention. Arrays and everything else are replaced
-     wholesale — a list that arrives is the whole list. */
+  function normalizeMetric(raw) {
+    var o = (raw && typeof raw === "object") ? raw : {};
+    return {
+      key: toStr(o.key),
+      label: toStr(o.label),
+      sub: toStr(o.sub),
+      side: toStr(o.side),
+      state: toStr(o.state),
+      index: toStr(o.index),
+      time: toStr(o.time),
+      unit: toStr(o.unit),
+      display: toStr(o.display),
+      value: toNum(o.value, 0),
+      delta: toNum(o.delta, 0),
+      series: toArr(o.series).map(function (v) { return toNum(v, NaN); })
+    };
+  }
+
+  function normalizeBoard(raw) {
+    var o = (raw && typeof raw === "object") ? raw : {};
+    return {
+      key: toStr(o.key),
+      title: toStr(o.title),
+      subtitle: toStr(o.subtitle),
+      unit: toStr(o.unit),
+      rows: toArr(o.rows).map(normalizeMetric)
+    };
+  }
+
+  /* 顶层的小对象做深一层的合并，这样一个 {"announcement":{"visible":false}}
+     这样的局部事件不会顺手把它没提到的标题擦掉。数组和别的一切整份替换 ——
+     送来一个列表，那就是全部。 */
   function mergeState(prev, incoming) {
     var out = Object.create(null);
     var k, i, merged;
-    if (prev) {
-      for (k in prev) if (has(prev, k)) out[k] = prev[k];
-    }
+    if (prev) { for (k in prev) if (has(prev, k)) out[k] = prev[k]; }
     for (k in incoming) if (has(incoming, k)) out[k] = incoming[k];
     for (k in incoming) {
       if (!has(incoming, k)) continue;
@@ -1029,14 +2051,13 @@
         visible: toBool(ann.visible)
       },
       lowerThird: { visible: toBool(low.visible), side: toStr(low.side) },
+      boards: toArr(o.boards).map(normalizeBoard),
       link: {
-        // Defaults to connected: a payload that omits `link` must not raise a
-        // false alarm on air.
+        // 默认连着：一份没写 link 的载荷不该在直播画面上拉起假警报。
         connected: link.connected === undefined ? true : toBool(link.connected),
         millisSinceLastMessage: toNum(link.millisSinceLastMessage, -1)
       },
-      // Kept whole so a bound text element can read any path, including fields
-      // this renderer has no opinion about.
+      // 整份留着，绑定文本元素可以读任意路径，包括这个渲染器没有意见的字段。
       __raw: o
     };
   }
@@ -1045,7 +2066,7 @@
     if (!o || typeof o !== "object" || Array.isArray(o)) return false;
     return has(o, "rev") || has(o, "scene") || has(o, "sides") || has(o, "ticker") ||
       has(o, "event") || has(o, "clock") || has(o, "announcement") ||
-      has(o, "lowerThird") || has(o, "link");
+      has(o, "boards") || has(o, "lowerThird") || has(o, "link");
   }
 
   var lastRaw = null;
@@ -1073,17 +2094,9 @@
     }, 700);
   }
 
-  function resolveSide(sides, id) {
-    var i;
-    if (id !== "") {
-      for (i = 0; i < sides.length; i++) {
-        if (sides[i].id === id) return sides[i];
-      }
-    }
-    return sides.length ? sides[0] : null;
-  }
-
-  // ---- connection ---------------------------------------------------------
+  // ==========================================================================
+  // 7. 链路
+  // ==========================================================================
 
   var elStatus = document.getElementById("statusChip");
   var elStatusText = document.getElementById("statusText");
@@ -1104,9 +2117,8 @@
     var text = "";
     var warn = false;
     var kind = "";
-    // Loading is not a fault. The chip stays away until something has actually
-    // failed or the grace period for a first state has passed, so switching an
-    // OBS scene never flashes a red warning on the way up.
+    // 加载中不是故障。在真的失败、或者等第一份状态的宽限期过完之前，这个
+    // 提示条不出现，所以切 OBS 场景时不会在启动过程中闪一下红色警告。
     var settling = attempt === 0 && !state && (Date.now() - bootAt) < STATE_WAIT_MS;
 
     if (!originOk) {
@@ -1118,7 +2130,7 @@
       text = "包装页已断线 · OVERLAY LINK LOST · 正在重连 #" + attempt;
       warn = true;
     } else if (state && state.preview) {
-      // Local preview numbers must never be mistaken for a live feed.
+      // 本地预览数据绝不能被当成直播信号。
       text = "本地预览数据 · PREVIEW DATA · 未连接比赛";
       warn = true;
       kind = "preview";
@@ -1140,12 +2152,12 @@
   function handlePayload(text) {
     if (typeof text !== "string") return;
     var trimmed = text.trim();
-    if (!trimmed || trimmed.charAt(0) === ":") return;   // comment / keepalive
+    if (!trimmed || trimmed.charAt(0) === ":") return;   // 注释 / 心跳
     var parsed;
     try {
       parsed = JSON.parse(trimmed);
     } catch (e) {
-      // Malformed or partial JSON: keep the last good state and carry on.
+      // 畸形或不完整的 JSON：保留上一份好状态，继续。
       log("丢弃无法解析的消息，保留上一份状态");
       return;
     }
@@ -1172,10 +2184,7 @@
       return res && res.ok ? res.text() : "";
     }).then(function (text) {
       if (text) handlePayload(text);
-    })["catch"](function () {
-      // The SSE reconnect path owns the visible state; a failed snapshot here is
-      // not worth a second alarm.
-    });
+    })["catch"](function () {});
   }
 
   function fetchLayout() {
@@ -1188,8 +2197,8 @@
   }
 
   function scheduleRetry() {
-    // attempt is already 1 on the first drop, so the exponent starts at 0:
-    // 400ms, 680ms, 1.2s, 2s, 3.3s, ... capped at 15s.
+    // attempt 第一次掉线时已经是 1，所以指数从 0 开始：
+    // 400ms, 680ms, 1.2s, 2s, 3.3s, ... 上限 15s。
     var delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.pow(1.7, Math.min(attempt - 1, 8)));
     clearTimeout(retryTimer);
     retryTimer = setTimeout(openStream, delay);
@@ -1197,7 +2206,7 @@
 
   function dropStream(reason) {
     if (sse) {
-      try { sse.close(); } catch (e) { /* already gone */ }
+      try { sse.close(); } catch (e) { /* 已经没了 */ }
       sse = null;
     }
     sseOpen = false;
@@ -1210,7 +2219,7 @@
   function openStream() {
     if (!originOk) return;
     if (sse) {
-      try { sse.close(); } catch (e) { /* already gone */ }
+      try { sse.close(); } catch (e) { /* 已经没了 */ }
       sse = null;
     }
 
@@ -1218,153 +2227,95 @@
     try {
       src = new EventSource("/events");
     } catch (e) {
-      dropStream("无法建立 SSE 连接");
+      dropStream("无法建立事件流");
       return;
     }
     sse = src;
 
     src.onopen = function () {
-      if (sse !== src) return;
       sseOpen = true;
       attempt = 0;
       updateStatusChip();
-      // A reconnect may have missed events, so take a snapshot of both too.
-      fetchState();
-      fetchLayout();
     };
-
-    src.onmessage = function (ev) {
-      if (sse !== src) return;
+    src.onmessage = function (event) {
       sseOpen = true;
-      handlePayload(ev && ev.data);
-      updateStatusChip();
+      handlePayload(event.data);
     };
-
-    // The layout travels as a named event so a restyle can be told apart from a
-    // score change without diffing the payload.
-    src.addEventListener("layout", function (ev) {
-      if (sse !== src) return;
-      handleLayoutPayload(ev && ev.data);
+    src.addEventListener("layout", function (event) {
+      handleLayoutPayload(event.data);
     });
-
     src.onerror = function () {
-      // EventSource retries by itself; we take the stream over so the backoff
-      // and the visible state are ours and cannot silently go stale.
-      if (sse !== src) return;
-      dropStream("SSE 断开");
+      // EventSource 会自己重连；关掉它，自己按退避重连，这样重连节奏由
+      // 本地服务重启的实际情况决定，而不是浏览器的固定间隔。
+      dropStream("事件流断开");
     };
   }
 
-  // ---- the editor's live edits --------------------------------------------
+  // ==========================================================================
+  // 8. 渲染循环
+  // ==========================================================================
 
-  /* While an element is being dragged the editor posts the document here, so the
-     preview updates without a save. Only accepted when this page is embedded:
-     a top-level overlay has no editor to hear from, and accepting the message
-     from anywhere would let any page on the machine restyle a live broadcast. */
-  window.addEventListener("message", function (event) {
-    if (window.parent === window) return;
-    var data = event && event.data;
-    if (!data || data.type !== "stevehud:layout") return;
-    if (data.layout) applyLayout(data.layout);
-  });
+  var lastFrame = 0;
 
-  // ---- animation loop -----------------------------------------------------
+  function frame(now) {
+    var dt = lastFrame ? Math.min(0.1, (now - lastFrame) / 1000) : 0;
+    lastFrame = now;
 
-  var rafId = 0;
-  var lastSecond = -1;
-  var lastFrameTs = 0;
-
-  function pad2(n) { return n < 10 ? "0" + n : String(n); }
-
-  function frame(ts) {
-    rafId = requestAnimationFrame(frame);
-    var now = Date.now();
-    var second = Math.floor(now / 1000);
-    var tickSeconds = second !== lastSecond;
-    lastSecond = second;
-    // dt comes from the rAF timestamp and is clamped, so a tab that was
-    // throttled or paused resumes without the marquee jumping.
-    var dt = lastFrameTs ? Math.min(0.1, (ts - lastFrameTs) / 1000) : 0;
-    lastFrameTs = ts;
-
-    mounted.forEach(function (entry) {
-      if (entry.node.hidden) {
-        if (entry.type === "ticker") return;
-      }
-      if (!entry.component.tick) return;
-      try {
-        if (entry.type === "matchBug") {
-          if (tickSeconds) entry.component.tick(now);
-        } else {
-          entry.component.tick(dt);
+    if (layout && state) {
+      var s = stateOrDefault();
+      for (var i = 0; i < mounted.length; i++) {
+        var entry = mounted[i];
+        if (entry.node.hidden || !entry.component.tick) continue;
+        try {
+          entry.component.tick(dt, s, entry.element);
+        } catch (e) {
+          log("元素 " + entry.id + " 时钟失败：" + (e && e.message ? e.message : e));
         }
-      } catch (e) {
-        log("元素 " + entry.id + " 动画失败：" + e.message);
       }
-    });
+    }
+    requestAnimationFrame(frame);
   }
 
-  function startLoop() {
-    if (rafId) return;
-    lastFrameTs = 0;
-    rafId = requestAnimationFrame(frame);
-  }
+  // ==========================================================================
+  // 9. 编辑器联动
+  // ==========================================================================
 
-  function stopLoop() {
-    if (!rafId) return;
-    cancelAnimationFrame(rafId);
-    rafId = 0;
-  }
+  /* 编辑器草稿直接推给本页，所以拖动时元素立刻跟着走，而不用等一次保存。
 
-  function onVisibility() {
-    if (document.hidden) stopLoop();
-    else startLoop();
-  }
-
-  var resizePending = false;
-  function onResize() {
-    if (resizePending) return;
-    resizePending = true;
-    requestAnimationFrame(function () {
-      resizePending = false;
-      if (!layout) return;
-      setUnit();
-      position();
-    });
-  }
-
-  // ---- boot ---------------------------------------------------------------
-
-  function boot() {
-    updateStatusChip();
-    startLoop();
-    window.addEventListener("resize", onResize);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    if (!originOk) {
-      // Opened straight off disk: absolute endpoints cannot resolve and SSE
-      // cannot work at all. Say so instead of sitting there looking broken.
-      log("请通过 http://127.0.0.1:8787/overlay/ 打开本页");
+     只接受形状正确的消息，而且只在来源是同源页面时才接受：本页会在 OBS 里
+     长时间开着，不该被随便谁 postMessage 一下就改版面。 */
+  window.addEventListener("message", function (event) {
+    if (event.origin && event.origin !== window.location.origin &&
+        event.origin !== "null") {
       return;
     }
+    var data = event.data;
+    if (!data || typeof data !== "object" || data.type !== "layout") return;
+    applyLayout(data.layout);
+  });
 
-    fetchLayout();
-    fetchState();
-    openStream();
+  window.addEventListener("resize", function () {
+    if (layout) setUnit();
+    if (layout && state) updateState();
+  });
 
-    // If neither the snapshot nor the stream produces a state, the chip says so
-    // rather than leaving silent placeholder panels on air.
-    clearTimeout(stateTimer);
-    stateTimer = setTimeout(updateStatusChip, STATE_WAIT_MS);
-  }
+  // ==========================================================================
+  // 10. 启动
+  // ==========================================================================
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  fetchLayout();
+  fetchState();
+  openStream();
+  requestAnimationFrame(frame);
+
+  // 供编辑器和诊断脚本读取的最小接口，不是 API 承诺。
+  window.__stevehud = {
+    layout: function () { return layout; },
+    state: function () { return state; },
+    unit: function () { return unit; },
+    types: function () { return Object.keys(BUILDERS); }
+  };
 })();
 </script>
-
 </body>
 </html>

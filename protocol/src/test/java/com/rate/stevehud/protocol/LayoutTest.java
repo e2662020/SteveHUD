@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LayoutTest {
 
     @ParameterizedTest
-    @ValueSource(strings = {"esports", "olympic", "minimal"})
+    @ValueSource(strings = {"arena", "olympia", "clean"})
     @DisplayName("every shipped preset loads and is drawable")
     void presetsLoad(String preset) {
         Layout layout = Layouts.load(preset);
@@ -46,14 +46,14 @@ class LayoutTest {
     }
 
     @Test
-    @DisplayName("the esports preset carries the whole package, not just a corner of it")
-    void esportsCoversTheViewport() {
-        Layout layout = Layouts.load(Layouts.PRESET_ESPORTS);
+    @DisplayName("the arena package carries the whole package, not just a corner of it")
+    void arenaCoversTheViewport() {
+        Layout layout = Layouts.load(Layouts.PRESET_ARENA);
 
         for (String type : List.of(Layout.TYPE_MATCH_BUG, Layout.TYPE_EVENT_INFO,
                 Layout.TYPE_TIMER, Layout.TYPE_LOWER_THIRD, Layout.TYPE_TICKER,
                 Layout.TYPE_ANNOUNCEMENT, Layout.TYPE_FRAME)) {
-            assertNotNull(layout.first(type), "esports is missing " + type);
+            assertNotNull(layout.first(type), "arena is missing " + type);
         }
 
         // The package has to reach all four corners, which is the property that
@@ -66,16 +66,44 @@ class LayoutTest {
     }
 
     @Test
-    @DisplayName("the olympic preset uses a text element bound to the match state")
-    void olympicExercisesBindings() {
-        Layout layout = Layouts.load(Layouts.PRESET_OLYMPIC);
+    @DisplayName("the olympia package uses a text element bound to the match state")
+    void olympiaExercisesBindings() {
+        Layout layout = Layouts.load(Layouts.PRESET_OLYMPIA);
         Layout.Element caption = layout.first(Layout.TYPE_TEXT);
 
-        assertNotNull(caption, "olympic has no discipline caption");
+        assertNotNull(caption, "olympia has no bound caption");
         assertEquals("event.stage", caption.binding);
-        // A preset that ships no frame element is the case that catches a renderer
+        // A package that ships no frame element is the case that catches a renderer
         // which assumes one is always present.
-        assertNull(layout.first(Layout.TYPE_FRAME), "olympic is meant to have no frame");
+        assertNull(Layouts.load(Layouts.PRESET_CLEAN).first(Layout.TYPE_FRAME),
+                "clean is meant to have no frame");
+    }
+
+    @Test
+    @DisplayName("every shipped package feeds its data boards, and one of them declares a centre card")
+    void boardsAreWiredUp() {
+        // A board element whose "board" option names nothing draws nothing, which is
+        // silent: the package looks like it simply has no data. Each shipped package
+        // therefore has to name a real table for at least one board, and the option
+        // has to survive normalisation to get there.
+        boolean sawDeclaredWindow = false;
+        int boards = 0;
+        for (String preset : Layouts.presetNames()) {
+            Layout layout = Layouts.load(preset);
+            for (Layout.Element element : layout.elements) {
+                String board = element.options.get("board");
+                if (board != null && !board.isBlank()) {
+                    boards++;
+                }
+                if ("allow".equals(element.options.get("window"))) {
+                    sawDeclaredWindow = true;
+                }
+            }
+        }
+        assertTrue(boards > 0, "no shipped board names a data table");
+        assertTrue(sawDeclaredWindow,
+                "no package declares options.window=allow, so the audit has no way to "
+                        + "tell a deliberate centre card from a panel that drifted into the middle");
     }
 
     @Test
@@ -143,7 +171,7 @@ class LayoutTest {
     @Test
     @DisplayName("normalising twice changes nothing the second time")
     void normalizeIsIdempotent() {
-        Layout once = Layouts.load(Layouts.PRESET_ESPORTS);
+        Layout once = Layouts.load(Layouts.PRESET_ARENA);
         String first = Layouts.toJson(once);
         String second = Layouts.toJson(Layouts.normalize(Layouts.fromJson(first)));
 
@@ -155,7 +183,7 @@ class LayoutTest {
     @Test
     @DisplayName("a document survives the round trip through JSON")
     void roundTrip() {
-        Layout original = Layouts.load(Layouts.PRESET_ESPORTS);
+        Layout original = Layouts.load(Layouts.PRESET_ARENA);
         Layout copy = Layouts.fromJson(Layouts.toPrettyJson(original));
 
         assertNotNull(copy);
@@ -171,6 +199,10 @@ class LayoutTest {
             assertEquals(a.y, b.y);
             assertEquals(a.width, b.width);
             assertEquals(a.scale, b.scale);
+            // Options are the extension point every data board is configured
+            // through, so losing them in a round trip would silently reset every
+            // panel to its defaults on the next save.
+            assertEquals(a.options, b.options);
         }
     }
 
@@ -216,10 +248,10 @@ class LayoutTest {
 
     @Test
     @DisplayName("an unknown preset name loads the default rather than nothing")
-    void unknownPresetFallsBackToEsports() {
+    void unknownPresetFallsBackToArena() {
         Layout layout = Layouts.load("no-such-package");
 
-        assertEquals(Layouts.load(Layouts.PRESET_ESPORTS).elements.size(),
+        assertEquals(Layouts.load(Layouts.PRESET_ARENA).elements.size(),
                 layout.elements.size());
         assertFalse(Layouts.isPreset("no-such-package"));
     }
