@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "name": "极简",
+  "canvas": { "width": 1920, "height": 1080 },
+  "theme": {
+    "accent": "#8AB4F8",
+    "live": "#FF5C5C",
+    "ink": "#EDF1F7",
+    "inkDim": "#8E9AAB",
+    "panelTop": "#141A24E0",
+    "panelBottom": "#0A0E14EE",
+    "border": "#FFFFFF2E",
+    "home": "#7AA2F7",
+    "away": "#F7768E",
+    "font": ""
+  },
+  "safe": { "x": 20, "y": 18 },
+  "elements": [
+    {
+      "id": "ticker",
+      "type": "ticker",
+      "label": "跑马灯",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomLeft",
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 46,
+      "scale": 1.0,
+      "opacity": 1.0,
+      "style": { "fontScale": 0.95, "uppercase": false },
+      "anim": { "enter": "fade", "update": "none", "durationMs": 300, "easing": "outCubic" }
+    },
+    {
+      "id": "bug",
+      "type": "matchBug",
+      "label": "比赛角标",
+      "visible": true,
+      "scenes": [],
+      "anchor": "topLeft",
+      "x": 20,
+      "y": 18,
+      "width": 300,
+      "height": 0,
+      "scale": 1.0,
+      "opacity": 0.96,
+      "style": { "fontScale": 0.92, "uppercase": false },
+      "anim": { "enter": "fade", "update": "pop", "durationMs": 320, "easing": "outCubic" }
+    },
+    {
+      "id": "timer",
+      "type": "timer",
+      "label": "计时器",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomRight",
+      "x": 20,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "scale": 1.0,
+      "opacity": 0.96,
+      "style": { "fontScale": 0.9, "uppercase": false },
+      "anim": { "enter": "fade", "update": "flash", "durationMs": 320, "easing": "outCubic" }
+    }
+  ]
+}

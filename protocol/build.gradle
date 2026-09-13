@@ -1,0 +1,41 @@
+// The SteveHUD wire format. Deliberately has zero Minecraft dependencies so that
+// the Spigot plugin, the Fabric mod and the test suite all share one definition
+// of what goes over the channel.
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    maven { name = 'Aliyun-Public'; url = 'https://maven.aliyun.com/repository/public' }
+    mavenCentral()
+}
+
+dependencies {
+    api 'com.google.code.gson:gson:2.11.0'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+base {
+    archivesName = 'stevehud-protocol'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    withSourcesJar()
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        exceptionFormat = 'full'
+    }
+}

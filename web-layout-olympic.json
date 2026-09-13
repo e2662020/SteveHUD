@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "name": "奥运转播 · Olympic",
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "theme": {
+    "accent": "#D4AF37",
+    "live": "#E4002B",
+    "ink": "#FFFFFF",
+    "inkDim": "#C6D0DA",
+    "panelTop": "#101A26E6",
+    "panelBottom": "#0A121CF2",
+    "border": "#FFFFFF2E",
+    "home": "#2E7DD1",
+    "away": "#D94F4F",
+    "font": ""
+  },
+  "safe": {
+    "x": 40,
+    "y": 34
+  },
+  "elements": [
+    {
+      "id": "ticker",
+      "type": "ticker",
+      "label": "跑马灯 Ticker",
+      "visible": true,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "bottomLeft",
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 58,
+      "scale": 1,
+      "opacity": 1,
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "none",
+        "durationMs": 350,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "bug",
+      "type": "matchBug",
+      "label": "比赛角标 Match bug",
+      "visible": true,
+      "scenes": [],
+      "anchor": "topLeft",
+      "x": 40,
+      "y": 34,
+      "width": 380,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "style": {
+        "accent": "#D4AF37",
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "event",
+      "type": "eventInfo",
+      "label": "赛事信息 Event info",
+      "visible": true,
+      "scenes": [
+        "full",
+        "compact"
+      ],
+      "anchor": "topRight",
+      "x": 40,
+      "y": 34,
+      "width": 460,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideDown",
+        "update": "pop",
+        "durationMs": 480,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "caption",
+      "type": "text",
+      "label": "项目字幕 Discipline caption",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": -500,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "text": "决赛 FINAL",
+      "binding": "event.stage",
+      "style": {
+        "ink": "#D4AF37",
+        "fontScale": 1.2,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "pop",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "lower",
+      "type": "lowerThird",
+      "label": "选手条 Lower third",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "bottomLeft",
+      "x": 14,
+      "y": 63,
+      "width": 880,
+      "height": 62,
+      "scale": 1,
+      "opacity": 1,
+      "style": {
+        "fontScale": 1.05,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideLeft",
+        "update": "pop",
+        "durationMs": 600,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "timer",
+      "type": "timer",
+      "label": "计时器 Timer",
+      "visible": true,
+      "scenes": [],
+      "anchor": "bottomRight",
+      "x": 40,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "style": {
+        "fontScale": 1,
+        "uppercase": false
+      },
+      "anim": {
+        "enter": "slideUp",
+        "update": "flash",
+        "durationMs": 420,
+        "easing": "outCubic"
+      }
+    },
+    {
+      "id": "announce",
+      "type": "announcement",
+      "label": "公告 Announcement",
+      "visible": true,
+      "scenes": [
+        "full"
+      ],
+      "anchor": "center",
+      "x": 0,
+      "y": -140,
+      "width": 0,
+      "height": 0,
+      "scale": 1,
+      "opacity": 1,
+      "style": {
+        "fontScale": 1,
+        "uppercase": true
+      },
+      "anim": {
+        "enter": "fade",
+        "update": "pop",
+        "durationMs": 520,
+        "easing": "inOutSine"
+      }
+    }
+  ]
+}

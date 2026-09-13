@@ -1,0 +1,9 @@
+# SteveHUD local test server
+#
+# A throwaway Paper 1.21.4 server, deliberately online-mode=false so a dev client
+# can join without authentication. Kept inside the repository so verifying a
+# change never touches any other server on this machine.
+#
+# `./scripts/setup-test-server.sh` downloads the jar and writes the config.
+
+eula=true

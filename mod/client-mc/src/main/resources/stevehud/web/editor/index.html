@@ -1,0 +1,1891 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SteveHUD 版面编辑器</title>
+<link rel="stylesheet" href="../shared/stevehud.css">
+</head>
+<body class="editor-page">
+
+<!--
+  SteveHUD layout editor.
+
+  Opened by /shude in game, or by hand at http://127.0.0.1:8787/editor/.
+
+  It edits the layout document — which graphics exist, where they sit, what
+  colour they are, how they arrive. It does not edit the match: scores, rosters
+  and the clock belong to the server, and an operator changes those with the
+  plugin's /stevehud command or from whatever scoring system is driving it.
+
+  The canvas is not a mock. It is the real overlay, in an iframe at exactly
+  1920x1080, with a drag layer on top. Two consequences worth stating:
+
+    * the handles read their geometry out of the iframe's own DOM, so they agree
+      with what is rendered without either side reimplementing the other's
+      anchor arithmetic;
+    * editing posts the document into the iframe, so what is being adjusted is
+      the thing that will go on air, not a preview of it.
+
+  The editor's own accent is taken from the loaded package, so the tool is
+  tinted by the thing it is editing. See section 7 of the stylesheet for that
+  and for the other two deliberate departures from the design system it follows.
+-->
+
+<header class="ed-header">
+  <div class="ed-brand">
+    <span class="ed-brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 6h16M4 12h10M4 18h6"/>
+        <circle cx="18" cy="17" r="3.4"/>
+      </svg>
+    </span>
+    <span class="ed-brand-text">
+      <span class="ed-brand-name">SteveHUD</span>
+      <span class="ed-brand-sub">版面编辑器</span>
+    </span>
+  </div>
+
+  <span class="ed-status" id="pageStatus"><i></i><span id="pageStatusText">正在连接</span></span>
+  <span class="ed-status" id="dataStatus"><i></i><span id="dataStatusText">等待数据</span></span>
+  <span class="ed-status" id="saveStatus"><i></i><span id="saveStatusText">已同步</span></span>
+
+  <span class="ed-spacer"></span>
+
+  <a class="ed-link" href="../overlay/" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>
+    </svg>
+    打开包装页
+  </a>
+</header>
+
+<main class="ed-main">
+
+  <!-- ===================== left: package, layers, preview ================= -->
+  <div class="ed-pane">
+
+    <section class="ed-card">
+      <div class="ed-card-head"><h2>版面包预设</h2></div>
+      <div class="ed-card-body">
+        <div class="ed-segmented" id="presetRow" role="group" aria-label="版面包预设"></div>
+        <p class="ed-hint">
+          切换预设会替换整个版面，<b>未保存的改动会丢失</b>；随后立即存盘并广播给所有客户端与包装页。
+        </p>
+      </div>
+    </section>
+
+    <section class="ed-card">
+      <div class="ed-card-head">
+        <h2>图层</h2>
+        <select id="addType" class="ed-add-type" aria-label="要添加的元素类型"></select>
+        <button class="btn btn-icon" id="btnAddText" type="button" title="添加这个类型的元素" aria-label="添加元素">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button class="btn btn-icon btn-danger" id="btnDelete" type="button"
+                title="删除选中元素（Delete）" aria-label="删除选中元素">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="ed-card-body is-flush">
+        <ul class="ed-layers" id="layerList"></ul>
+      </div>
+      <div class="ed-card-body">
+        <p class="ed-hint">列表顺序即绘制顺序：<b>靠前 = 在后面</b>。视口级元素（跑马灯、安全框）习惯放最前。</p>
+      </div>
+    </section>
+
+    <section class="ed-card">
+      <div class="ed-card-head"><h2>本地预览数据</h2></div>
+      <div class="ed-card-body">
+        <div class="ed-row">
+          <button class="btn" id="btnHome" type="button">主队 +1</button>
+          <button class="btn" id="btnAway" type="button">客队 +1</button>
+        </div>
+        <div class="ed-row">
+          <button class="btn" id="btnAnnounce" type="button">公告</button>
+          <button class="btn" id="btnLower" type="button">选手条</button>
+        </div>
+        <div class="ed-row">
+          <button class="btn" id="btnTicker" type="button">跑马灯</button>
+          <button class="btn" id="btnClock" type="button">计时</button>
+        </div>
+        <div class="ed-segmented" id="sceneRow" role="group" aria-label="场景">
+          <button class="btn" type="button" data-scene="full">完整</button>
+          <button class="btn" type="button" data-scene="compact">紧凑</button>
+          <button class="btn" type="button" data-scene="minimal">极简</button>
+        </div>
+        <button class="btn" id="btnClearPreview" type="button">清除预览数据</button>
+        <p class="ed-hint">
+          只在本机造一份假数据，用来在没有比赛的时候排版面：长队名、三位数比分、停住的计时器。
+          <b>不影响别人，也不发给服务端。</b>
+        </p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ========================== center: canvas =========================== -->
+  <div class="ed-center">
+
+    <div class="ed-toolbar">
+      <button class="btn btn-primary" id="btnSave" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+          <path d="M8 3v6h7V3M8 21v-6h8v6"/>
+        </svg>
+        <span id="btnSaveLabel">保存并广播</span>
+      </button>
+      <button class="btn" id="btnRevert" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/>
+        </svg>
+        放弃改动
+      </button>
+
+      <span class="ed-toolbar-sep" aria-hidden="true"></span>
+
+      <button class="btn btn-icon" id="btnFit" type="button" title="适应窗口" aria-label="适应窗口">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>
+        </svg>
+      </button>
+      <button class="btn btn-icon" id="btnExport" type="button" title="导出 JSON" aria-label="导出 JSON">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>
+        </svg>
+      </button>
+      <button class="btn btn-icon" id="btnImport" type="button" title="导入 JSON" aria-label="导入 JSON">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>
+        </svg>
+      </button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+
+      <span class="ed-toolbar-sep" aria-hidden="true"></span>
+      <span class="ed-status" id="zoomStatus"><i></i><span id="zoomStatusText">100%</span></span>
+      <span class="ed-spacer"></span>
+      <span class="ed-status" id="scopeStatus"><i></i><span id="scopeStatusText">本机版面</span></span>
+      <span class="ed-status" id="layoutStatus"><i></i><span id="layoutStatusText">—</span></span>
+    </div>
+
+    <!-- Only on screen when it matters. A server-wide package wins over the local
+         one, so while it is set nothing done here appears on air; an operator who
+         is not told that will keep dragging an element and conclude the editor is
+         broken. -->
+    <p class="ed-note is-hidden" id="scopeNote"></p>
+
+    <div class="ed-canvas-wrap" id="canvasWrap">
+      <div class="ed-canvas" id="canvas">
+        <div class="ed-scaler" id="scaler">
+          <iframe id="overlayFrame" src="../overlay/" title="包装页预览"></iframe>
+        </div>
+        <div class="ed-handles" id="handles"></div>
+      </div>
+    </div>
+
+    <p class="ed-hint">
+      拖动元素改位置，拖右下角改尺寸，方向键微调（按住 Shift 每次 10 像素），Delete 删除，Esc 取消选择。
+    </p>
+
+  </div>
+
+  <!-- ========================= right: inspector ========================== -->
+  <div class="ed-pane">
+
+    <section class="ed-card">
+      <div class="ed-card-head"><h2>元素属性</h2></div>
+      <div class="ed-card-body" id="inspector"></div>
+    </section>
+
+    <section class="ed-card">
+      <div class="ed-card-head"><h2>全局配色</h2></div>
+      <div class="ed-card-body" id="theme"></div>
+    </section>
+
+    <section class="ed-card">
+      <div class="ed-card-head">
+        <h2>版面 JSON</h2>
+        <button class="btn btn-icon" id="btnFormat" type="button" title="格式化" aria-label="格式化 JSON">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+               stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h13"/></svg>
+        </button>
+        <button class="btn" id="btnApplyJson" type="button">应用</button>
+      </div>
+      <div class="ed-card-body">
+        <textarea class="ed-json" id="json" spellcheck="false" autocomplete="off"
+                  aria-label="版面 JSON"></textarea>
+      </div>
+    </section>
+
+    <section class="ed-card">
+      <div class="ed-card-head"><h2>消息</h2></div>
+      <ul class="ed-log" id="log"></ul>
+    </section>
+
+  </div>
+
+</main>
+
+<script>
+/* SteveHUD layout editor.
+ *
+ * The document is the single source of truth and lives here while editing. Every
+ * change goes three places:
+ *
+ *   this.layout       the editor's copy, and the JSON pane
+ *   the iframe        by postMessage, so the preview moves immediately
+ *   the handles       re-read from the iframe's DOM, so they cannot disagree
+ *
+ * and on save, a fourth: POST /api/layout, which stores it, broadcasts it to
+ * every other page and client, and feeds the in-game HUD.
+ *
+ * Two rules matter more than the rest:
+ *
+ *   * an incoming layout over the stream never overwrites unsaved edits. Another
+ *     operator saving must not silently discard half an hour of dragging; the
+ *     conflict is reported and left for a person to resolve.
+ *   * every failure is visible. A rejected save, a dropped stream, a malformed
+ *     document — all of them print somewhere on this page, because the
+ *     alternative is an operator finding out from the broadcast.
+ */
+(function () {
+  "use strict";
+
+  var PRESET_FALLBACK = { presets: ["esports", "olympic", "minimal"], labels: {}, current: "esports" };
+  var SCENES = ["full", "compact", "minimal"];
+  var SCENE_LABELS = { full: "完整", compact: "紧凑", minimal: "极简" };
+  var ANCHORS = [
+    ["topLeft", "左上"],
+    ["topRight", "右上"],
+    ["bottomLeft", "左下"],
+    ["bottomRight", "右下"],
+    ["center", "居中"]
+  ];
+  var TYPES = [
+    ["matchBug", "比赛角标"],
+    ["eventInfo", "赛事信息"],
+    ["timer", "计时器"],
+    ["lowerThird", "选手条"],
+    ["ticker", "跑马灯"],
+    ["announcement", "公告"],
+    ["frame", "安全框"],
+    ["text", "文本"]
+  ];
+  var ENTERS = ["none", "fade", "slideDown", "slideUp", "slideLeft", "slideRight", "scaleIn", "popIn"];
+  var UPDATES = ["none", "pop", "flash"];
+  var EASINGS = ["linear", "outCubic", "outQuint", "outBack", "inOutSine"];
+
+  var RETRY_BASE_MS = 400;
+  var RETRY_MAX_MS = 15000;
+  var LOG_LIMIT = 60;
+
+  /* Icons, inline. Not an icon font and not emoji: emoji are font-dependent,
+     inconsistent across platforms, and cannot take the accent colour. These are
+     static strings with no data interpolated into them. */
+  var ICONS = {
+    grip: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>' +
+          '<circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>' +
+          '<circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ' +
+         'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+         '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/>' +
+         '<circle cx="12" cy="12" r="2.6"/></svg>',
+    eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ' +
+            'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M4 4l16 16"/>' +
+            '<path d="M9.5 6.2A9.7 9.7 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5a17 17 0 0 1-3 3.6"/>' +
+            '<path d="M6.4 8.1A17 17 0 0 0 2 12s3.6 6.5 10 6.5a9.6 9.6 0 0 0 3.4-.6"/>' +
+            '<path d="M10.3 10.4a2.6 2.6 0 0 0 3.4 3.4"/></svg>',
+    up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ' +
+          'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<rect x="9" y="9" width="11" height="11" rx="2"/>' +
+          '<path d="M5 15V6a1 1 0 0 1 1-1h9"/></svg>'
+  };
+
+  // ---- helpers -----------------------------------------------------------
+
+  function isObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+
+  function toNum(v, fallback) {
+    var n = typeof v === "number" ? v : parseFloat(v);
+    return isFinite(n) ? n : fallback;
+  }
+
+  function clamp(v, min, max) { return v < min ? min : (v > max ? max : v); }
+
+  function clone(v) { return JSON.parse(JSON.stringify(v)); }
+
+  function pretty(v) {
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function el(tag, className) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    return node;
+  }
+
+  function on(node, event, handler) { if (node) node.addEventListener(event, handler); }
+
+  var COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+  function rgbOf(color) {
+    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || ""));
+    if (!m) return null;
+    var h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function linear(v) {
+    var s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  }
+
+  /** Black or white ink for a background, by WCAG contrast rather than a
+      brightness threshold — the same rule the package uses, so the editor and
+      the graphics agree about which text colour is legible. */
+  function inkOn(color) {
+    var c = rgbOf(color);
+    if (!c) return "#14100a";
+    var l = 0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2]);
+    return l > 0.179 ? "#14100a" : "#ffffff";
+  }
+
+  function rgba(color, alpha) {
+    var c = rgbOf(color);
+    return c ? "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha + ")" : null;
+  }
+
+  // ---- state -------------------------------------------------------------
+
+  var layout = null;        // the document being edited
+  var saved = null;         // the last document known to be stored
+  var selectedId = null;
+  var dirty = false;
+  var saveInFlight = false;
+  var zoom = 1;
+  var fitZoom = true;
+
+  var raw = null;           // last match state received, verbatim
+  var sse = null;
+  var sseOpen = false;
+  var attempt = 0;
+  var retryTimer = 0;
+  var originOk = window.location.protocol !== "file:";
+
+  var presets = PRESET_FALLBACK;
+  var ui = {};
+
+  // ---- log ---------------------------------------------------------------
+
+  function stamp() {
+    var d = new Date();
+    function p(n) { return n < 10 ? "0" + n : String(n); }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  function note(text, kind) {
+    if (!ui.log) return;
+    var li = document.createElement("li");
+    if (kind) li.classList.add("is-" + kind);
+    var time = document.createElement("time");
+    time.textContent = stamp();
+    var span = document.createElement("span");
+    span.textContent = text;       // textContent: never markup
+    li.appendChild(time);
+    li.appendChild(span);
+    ui.log.insertBefore(li, ui.log.firstChild);
+    while (ui.log.children.length > LOG_LIMIT) ui.log.removeChild(ui.log.lastChild);
+  }
+
+  // ---- status ------------------------------------------------------------
+
+  function setStatus(node, textNode, state, text) {
+    if (!node) return;
+    if (textNode && textNode.textContent !== text) textNode.textContent = text;
+    node.classList.toggle("is-ok", state === true);
+    node.classList.toggle("is-bad", state === false);
+    node.classList.toggle("is-warn", state === "warn");
+  }
+
+  function updateStatus() {
+    if (!originOk) {
+      setStatus(ui.pageStatus, ui.pageStatusText, false, "请用 http:// 打开");
+    } else if (sseOpen) {
+      setStatus(ui.pageStatus, ui.pageStatusText, true, "已连接 · rev " + revText());
+    } else {
+      setStatus(ui.pageStatus, ui.pageStatusText, false, "重连中 #" + attempt);
+    }
+
+    if (!raw) {
+      setStatus(ui.dataStatus, ui.dataStatusText, false, "等待数据");
+    } else if (raw.preview) {
+      setStatus(ui.dataStatus, ui.dataStatusText, "warn", "本地预览数据");
+    } else {
+      var link = isObject(raw.link) ? raw.link : {};
+      var connected = link.connected === undefined ? true : link.connected === true;
+      setStatus(ui.dataStatus, ui.dataStatusText, connected,
+        connected ? "赛事数据已连接" : "赛事数据未连接");
+    }
+
+    setStatus(ui.saveStatus, ui.saveStatusText, dirty ? "warn" : true,
+      saveInFlight ? "保存中…" : (dirty ? "有未保存改动" : "已同步"));
+    if (ui.scopeNote) renderScope();
+    if (ui.btnSave) ui.btnSave.disabled = !dirty || saveInFlight;
+    if (ui.btnRevert) ui.btnRevert.disabled = !dirty;
+    if (ui.btnDelete) ui.btnDelete.disabled = !selected();
+  }
+
+  function revText() { return raw ? String(toNum(raw.rev, -1)) : "—"; }
+
+  function setZoomStatus() {
+    setStatus(ui.zoomStatus, ui.zoomStatusText, true, Math.round(zoom * 100) + "%");
+  }
+
+  // ---- the document ------------------------------------------------------
+
+  function adopt(next, source) {
+    if (!isObject(next) || !isObject(next.canvas)) return false;
+    layout = next;
+    if (!Array.isArray(layout.elements)) layout.elements = [];
+    if (!isObject(layout.theme)) layout.theme = {};
+    if (!isObject(layout.safe)) layout.safe = { x: 26, y: 22 };
+    if (!saved) saved = clone(layout);
+    applyEditorTheme(layout.theme);
+    applyToFrame();
+    // Sized before the handles are built: they read their geometry out of the
+    // iframe, and a zero-sized canvas would put every box at the origin.
+    resizeCanvas();
+    renderAll();
+    if (ui.layoutStatusText) {
+      ui.layoutStatusText.textContent = (layout.name || "未命名") + " · " + layout.elements.length + " 个元素";
+    }
+    if (source) note("已载入版面 · " + source);
+    return true;
+  }
+
+  /**
+   * Tints the editor with the package's own accent.
+   *
+   * The design system this page follows suggests a fixed indigo. Following it
+   * here would mean the tool and the thing it makes look like two products, and
+   * would fight the operator: every package they load would sit next to a UI in
+   * a colour the package does not use. So the neutral ramp is the system's and
+   * the accent is the document's.
+   */
+  function applyEditorTheme(theme) {
+    var page = document.body;
+    var accent = COLOR_RE.test(String(theme && theme.accent || "")) ? theme.accent : "#FFC24B";
+    page.style.setProperty("--accent", accent);
+    page.style.setProperty("--on-accent", inkOn(accent));
+    page.style.setProperty("--accent-soft", rgba(accent, 0.14) || "rgba(255,194,75,0.14)");
+    page.style.setProperty("--accent-line", rgba(accent, 0.45) || "rgba(255,194,75,0.45)");
+    page.style.setProperty("--accent-glow", rgba(accent, 0.22) || "rgba(255,194,75,0.22)");
+  }
+
+  function markDirty() {
+    dirty = true;
+    layout.__rev = (layout.__rev || 0) + 1;
+    applyToFrame();
+    renderLayers();
+    renderJson();
+    updateStatus();
+  }
+
+  /** Pushes the document into the preview iframe, which is the real overlay. */
+  function applyToFrame() {
+    var frame = ui.frame;
+    if (!frame || !frame.contentWindow || !layout) return;
+    try {
+      frame.contentWindow.postMessage({ type: "stevehud:layout", layout: layout }, "*");
+    } catch (e) {
+      note("无法把版面推送到预览", "bad");
+    }
+  }
+
+  function selected() {
+    if (!layout || !selectedId) return null;
+    for (var i = 0; i < layout.elements.length; i++) {
+      if (layout.elements[i] && layout.elements[i].id === selectedId) return layout.elements[i];
+    }
+    return null;
+  }
+
+  function elementById(id) {
+    if (!layout) return null;
+    for (var i = 0; i < layout.elements.length; i++) {
+      if (layout.elements[i] && layout.elements[i].id === id) return layout.elements[i];
+    }
+    return null;
+  }
+
+  // ---- the iframe's geometry --------------------------------------------
+
+  /* The handles read their boxes out of the overlay's own DOM rather than
+     recomputing the anchor arithmetic here. Two implementations of "where does
+     this element go" would eventually disagree, and the editor would then be
+     lying about the broadcast — the one thing it must never do. */
+  function measure() {
+    var frame = ui.frame;
+    if (!frame || !layout) return [];
+    var doc;
+    try {
+      doc = frame.contentDocument;
+    } catch (e) {
+      return [];
+    }
+    if (!doc) return [];
+
+    var out = [];
+    layout.elements.forEach(function (element) {
+      if (!element || !element.id) return;
+      var node = doc.querySelector('.el[data-id="' + cssEscape(element.id) + '"]');
+      if (!node || node.hidden) {
+        out.push({ element: element, rect: null });
+        return;
+      }
+      var r = node.getBoundingClientRect();
+      out.push({
+        element: element,
+        rect: { left: r.left, top: r.top, width: r.width, height: r.height }
+      });
+    });
+    return out;
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(value);
+    return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  // ---- rendering ---------------------------------------------------------
+
+  function renderAll() {
+    renderPresets();
+    renderLayers();
+    renderInspector();
+    renderTheme();
+    renderJson();
+    renderHandles();
+    updateStatus();
+  }
+
+  function renderPresets() {
+    if (!ui.presetRow) return;
+    ui.presetRow.textContent = "";
+    (presets.presets || []).forEach(function (name) {
+      var button = el("button", "btn");
+      button.type = "button";
+      // The label goes in its own clipped span. text-overflow does not apply to
+      // the anonymous text of a flex container, which is why these used to spill
+      // out of their buttons instead of ellipsising.
+      var caption = el("span", "clip");
+      caption.textContent = (presets.labels && presets.labels[name]) || name;
+      button.appendChild(caption);
+      button.title = name;
+      button.classList.toggle("is-active", name === presets.current);
+      button.setAttribute("aria-pressed", name === presets.current ? "true" : "false");
+      on(button, "click", function () { switchPreset(name); });
+      ui.presetRow.appendChild(button);
+    });
+  }
+
+  function renderLayers() {
+    if (!ui.layerList) return;
+    ui.layerList.textContent = "";
+    if (!layout) return;
+
+    if (!layout.elements.length) {
+      var empty = el("li", "ed-empty");
+      empty.textContent = "版面里还没有元素。用上方的 + 添加一个文本元素，或切换一个预设。";
+      ui.layerList.appendChild(empty);
+      updateStatus();
+      return;
+    }
+
+    layout.elements.forEach(function (element) {
+      var li = el("li", "ed-layer");
+      li.classList.toggle("is-selected", element.id === selectedId);
+      li.classList.toggle("is-hidden", element.visible === false);
+      li.setAttribute("data-id", element.id);
+
+      var grip = el("span", "ed-layer-grip");
+      grip.innerHTML = ICONS.grip;
+
+      var name = el("span", "ed-layer-name");
+      name.textContent = element.label || element.id;
+      name.title = element.id + " · " + element.type;
+
+      var type = el("span", "ed-layer-type");
+      type.textContent = element.type;
+
+      var eye = el("button", "ed-layer-eye");
+      eye.type = "button";
+      eye.innerHTML = element.visible === false ? ICONS.eyeOff : ICONS.eye;
+      eye.title = element.visible === false ? "显示这个元素" : "隐藏这个元素";
+      eye.setAttribute("aria-label", eye.title);
+      eye.setAttribute("aria-pressed", element.visible === false ? "false" : "true");
+      on(eye, "click", function (ev) {
+        ev.stopPropagation();
+        element.visible = element.visible === false;
+        markDirty();
+        renderLayers();
+        renderInspector();
+        renderHandles();
+      });
+
+      li.appendChild(grip);
+      li.appendChild(name);
+      li.appendChild(type);
+      li.appendChild(eye);
+      on(li, "click", function () {
+        selectedId = element.id;
+        renderLayers();
+        renderInspector();
+        renderHandles();
+        updateStatus();
+      });
+      ui.layerList.appendChild(li);
+    });
+  }
+
+  function field(label, node, wide) {
+    var wrap = el("label", "ed-field" + (wide ? " is-wide" : ""));
+    var caption = el("span");
+    caption.textContent = label;
+    wrap.appendChild(caption);
+    wrap.appendChild(node);
+    return wrap;
+  }
+
+  function section(title, content) {
+    var wrap = el("div", "ed-section");
+    var head = el("div", "ed-section-title");
+    var text = el("span");
+    text.textContent = title;
+    head.appendChild(text);
+    wrap.appendChild(head);
+    wrap.appendChild(content);
+    return wrap;
+  }
+
+  function numberInput(value, step, onChange) {
+    var input = el("input");
+    input.type = "number";
+    input.step = step || 1;
+    input.value = value;
+    on(input, "change", function () {
+      var next = parseFloat(input.value);
+      if (!isFinite(next)) { input.value = value; return; }
+      onChange(next);
+    });
+    return input;
+  }
+
+  function textInput(value, onChange) {
+    var input = el("input");
+    input.type = "text";
+    input.value = value === undefined || value === null ? "" : value;
+    on(input, "change", function () { onChange(input.value); });
+    return input;
+  }
+
+  function selectInput(options, value, onChange) {
+    var select = el("select");
+    options.forEach(function (pair) {
+      var label = Array.isArray(pair) ? pair[1] : pair;
+      var val = Array.isArray(pair) ? pair[0] : pair;
+      var option = el("option");
+      option.value = val;
+      option.textContent = label;
+      if (val === value) option.selected = true;
+      select.appendChild(option);
+    });
+    on(select, "change", function () { onChange(select.value); });
+    return select;
+  }
+
+  function colorInput(value, fallback, onChange) {
+    var input = el("input");
+    input.type = "color";
+    input.value = COLOR_RE.test(String(value || "")) && String(value).length === 7
+      ? String(value)
+      : fallback;
+    on(input, "input", function () { onChange(input.value.toUpperCase()); });
+    return input;
+  }
+
+  function checkbox(label, checked, onChange) {
+    var wrap = el("label", "ed-check");
+    var input = el("input");
+    input.type = "checkbox";
+    input.checked = !!checked;
+    on(input, "change", function () { onChange(input.checked); });
+    var span = el("span");
+    span.textContent = label;
+    wrap.appendChild(input);
+    wrap.appendChild(span);
+    return wrap;
+  }
+
+  function iconButton(icon, label, onClick, className) {
+    var node = el("button", "btn btn-icon" + (className ? " " + className : ""));
+    node.type = "button";
+    node.innerHTML = icon;
+    node.title = label;
+    node.setAttribute("aria-label", label);
+    on(node, "click", onClick);
+    return node;
+  }
+
+  function renderInspector() {
+    var body = ui.inspector;
+    if (!body) return;
+    body.textContent = "";
+
+    var element = selected();
+    if (!element) {
+      var empty = el("div", "ed-empty");
+      empty.textContent = "未选中元素。在画布上点一个框，或从左侧图层列表里选一个。";
+      body.appendChild(empty);
+      return;
+    }
+
+    // --- identity ---
+    var identity = el("div", "ed-grid");
+    identity.appendChild(field("名称", textInput(element.label, function (v) {
+      element.label = v; markDirty(); renderLayers();
+    }), true));
+    identity.appendChild(field("类型", (function () {
+      var span = el("input");
+      span.type = "text";
+      span.value = element.type;
+      span.readOnly = true;
+      span.title = "元素类型不可更改：每一种类型对应一套专门的绘制与数据绑定。";
+      return span;
+    })(), true));
+    body.appendChild(section("标识", identity));
+
+    // --- placement ---
+    var placement = el("div", "ed-grid");
+    placement.appendChild(field("锚点", selectInput(ANCHORS, element.anchor, function (v) {
+      // The anchored corner is the one that stays put, so changing it re-pins
+      // the element without touching its offset.
+      element.anchor = v; markDirty(); renderHandles(); renderInspector();
+    }), true));
+    placement.appendChild(field("X 偏移", numberInput(element.x, 1, function (v) {
+      element.x = Math.round(v); markDirty(); renderHandles();
+    })));
+    placement.appendChild(field("Y 偏移", numberInput(element.y, 1, function (v) {
+      element.y = Math.round(v); markDirty(); renderHandles();
+    })));
+    placement.appendChild(field("宽（0=自适应）", numberInput(element.width, 1, function (v) {
+      element.width = Math.max(0, Math.round(v)); markDirty(); renderHandles();
+    })));
+    placement.appendChild(field("高（0=自适应）", numberInput(element.height, 1, function (v) {
+      element.height = Math.max(0, Math.round(v)); markDirty(); renderHandles();
+    })));
+    body.appendChild(section("位置", placement));
+
+    var anchorNote = el("p", "ed-hint");
+    anchorNote.textContent = "偏移从锚定的那个角往画面里量，所以往右贴边永远填正数。缩放绕元素自己的角进行，贴哪边就还是贴哪边。";
+    body.appendChild(anchorNote);
+
+    // --- appearance ---
+    var appearance = el("div", "ed-grid");
+    appearance.appendChild(field("缩放", numberInput(element.scale, 0.05, function (v) {
+      element.scale = clamp(v, 0.05, 8); markDirty(); renderHandles();
+    })));
+    appearance.appendChild(field("不透明度", numberInput(element.opacity, 0.05, function (v) {
+      element.opacity = clamp(v, 0, 1); markDirty(); renderHandles();
+    })));
+    body.appendChild(section("外观", appearance));
+    body.appendChild(checkbox("显示（也可以点图层右侧的眼睛）", element.visible !== false, function (v) {
+      element.visible = v; markDirty(); renderLayers(); renderHandles();
+    }));
+
+    // --- scene gating ---
+    var sceneBox = el("div", "ed-grid");
+    SCENES.forEach(function (scene) {
+      sceneBox.appendChild(checkbox(SCENE_LABELS[scene], (element.scenes || []).indexOf(scene) >= 0,
+        function (checked) {
+          var scenes = Array.isArray(element.scenes) ? element.scenes.slice() : [];
+          var at = scenes.indexOf(scene);
+          if (checked && at < 0) scenes.push(scene);
+          if (!checked && at >= 0) scenes.splice(at, 1);
+          element.scenes = scenes;
+          markDirty();
+          renderHandles();
+        }));
+    });
+    var sceneSection = section("出现场景", sceneBox);
+    var sceneHint = el("p", "ed-hint");
+    sceneHint.textContent = "三个都不勾 = 所有场景都显示。";
+    sceneSection.appendChild(sceneHint);
+    body.appendChild(sceneSection);
+
+    // --- animation ---
+    var anim = isObject(element.anim) ? element.anim : (element.anim = {});
+    var animGrid = el("div", "ed-grid");
+    animGrid.appendChild(field("入场", selectInput(ENTERS, anim.enter, function (v) {
+      anim.enter = v; markDirty();
+    })));
+    animGrid.appendChild(field("数据变化", selectInput(UPDATES, anim.update, function (v) {
+      anim.update = v; markDirty();
+    })));
+    animGrid.appendChild(field("时长 ms", numberInput(anim.durationMs, 10, function (v) {
+      anim.durationMs = clamp(Math.round(v), 0, 4000); markDirty();
+    })));
+    animGrid.appendChild(field("缓动", selectInput(EASINGS, anim.easing, function (v) {
+      anim.easing = v; markDirty();
+    })));
+    body.appendChild(section("动画", animGrid));
+
+    // --- per-element style overrides ---
+    /* A checkbox decides whether an override exists at all, because "inherit
+       from the theme" is a real state and not the same as "happens to match the
+       theme right now". Collapsing the two would freeze the element against any
+       later theme change. */
+    var style = isObject(element.style) ? element.style : (element.style = {});
+    var styleGrid = el("div", "ed-grid");
+
+    styleGrid.appendChild(checkbox("覆盖主色", !!style.accent, function (checked) {
+      if (checked) style.accent = layout.theme.accent || "#FFC24B";
+      else delete style.accent;
+      markDirty(); renderInspector(); renderHandles();
+    }));
+    if (style.accent) {
+      styleGrid.appendChild(field("主色", colorInput(style.accent, "#FFC24B", function (v) {
+        style.accent = v; markDirty(); renderHandles();
+      })));
+    }
+
+    styleGrid.appendChild(checkbox("覆盖文字色", !!style.ink, function (checked) {
+      if (checked) style.ink = layout.theme.ink || "#F2F4F8";
+      else delete style.ink;
+      markDirty(); renderInspector(); renderHandles();
+    }));
+    if (style.ink) {
+      styleGrid.appendChild(field("文字色", colorInput(style.ink, "#F2F4F8", function (v) {
+        style.ink = v; markDirty(); renderHandles();
+      })));
+    }
+
+    styleGrid.appendChild(field("字号倍率", numberInput(
+      style.fontScale === undefined ? 1 : style.fontScale, 0.05, function (v) {
+        style.fontScale = clamp(v, 0.25, 4); markDirty(); renderHandles();
+      })));
+
+    var styleSection = section("着色", styleGrid);
+    styleSection.appendChild(checkbox("全部大写", !!style.uppercase, function (v) {
+      style.uppercase = v; markDirty(); renderHandles();
+    }));
+    body.appendChild(styleSection);
+
+    // --- bound text ---
+    if (element.type === "text") {
+      var textGrid = el("div", "ed-grid");
+      textGrid.appendChild(field("绑定路径", textInput(element.binding, function (v) {
+        element.binding = v; markDirty();
+      }), true));
+      textGrid.appendChild(field("兜底文字", textInput(element.text, function (v) {
+        element.text = v; markDirty();
+      }), true));
+      var textSection = section("内容", textGrid);
+      var bindHint = el("p", "ed-hint");
+      bindHint.textContent = "例如 event.name、event.stage、sides[0].short、sides[0].score、clock.value。" +
+        "绑定取到值就用它，取不到才用兜底文字。";
+      textSection.appendChild(bindHint);
+      body.appendChild(textSection);
+    }
+
+    // --- actions ---
+    var actions = el("div", "ed-row");
+    actions.appendChild(iconButton(ICONS.up, "上移一层", function () { reorder(-1); }));
+    actions.appendChild(iconButton(ICONS.down, "下移一层", function () { reorder(1); }));
+    actions.appendChild(iconButton(ICONS.copy, "复制这个元素", function () { duplicate(); }));
+    var actionSection = section("顺序", actions);
+    var orderHint = el("p", "ed-hint");
+    orderHint.textContent = "越靠后越上层。";
+    actionSection.appendChild(orderHint);
+    body.appendChild(actionSection);
+  }
+
+  function renderTheme() {
+    var body = ui.theme;
+    if (!body || !layout) return;
+    body.textContent = "";
+
+    var theme = layout.theme;
+    var grid = el("div", "ed-grid");
+    [["accent", "主色", "#FFC24B"],
+     ["live", "直播色", "#FF4D4D"],
+     ["ink", "文字", "#F2F4F8"],
+     ["inkDim", "次要文字", "#9AA4B2"],
+     ["panelTop", "面板上沿", "#1A2030"],
+     ["panelBottom", "面板下沿", "#0C1018"],
+     ["border", "边框", "#FFFFFF"],
+     ["home", "主队", "#4C9AFF"],
+     ["away", "客队", "#FF6B6B"]].forEach(function (row) {
+      grid.appendChild(field(row[1], colorInput(theme[row[0]], row[2], function (v) {
+        theme[row[0]] = v;
+        applyEditorTheme(theme);
+        markDirty();
+        renderAll();
+      })));
+    });
+    body.appendChild(section("调色板", grid));
+
+    var safeGrid = el("div", "ed-grid");
+    safeGrid.appendChild(field("安全边距 X", numberInput(layout.safe.x, 1, function (v) {
+      layout.safe.x = Math.max(0, Math.round(v)); markDirty(); renderHandles();
+    })));
+    safeGrid.appendChild(field("安全边距 Y", numberInput(layout.safe.y, 1, function (v) {
+      layout.safe.y = Math.max(0, Math.round(v)); markDirty(); renderHandles();
+    })));
+    var safeSection = section("安全边距", safeGrid);
+    var hint = el("p", "ed-hint");
+    hint.textContent = "安全边距是画面四周留白的参考值：安全框照它绘制，各元素的默认偏移也是照它定的。" +
+      "颜色末尾两位是透明度（#RRGGBBAA）。";
+    safeSection.appendChild(hint);
+    body.appendChild(safeSection);
+  }
+
+  function renderJson() {
+    if (!ui.json || !layout) return;
+    var text = pretty(stripInternal(layout));
+    // The operator's typing wins: refilling under a cursor mid-edit is how a
+    // valid document gets silently mangled.
+    if (document.activeElement !== ui.json) ui.json.value = text;
+  }
+
+  function stripInternal(doc) {
+    var copy = clone(doc);
+    Object.keys(copy).forEach(function (key) {
+      if (key.indexOf("__") === 0) delete copy[key];
+    });
+    return copy;
+  }
+
+  // ---- the drag layer ----------------------------------------------------
+
+  function renderHandles() {
+    var layer = ui.handles;
+    if (!layer || !layout) return;
+    layer.textContent = "";
+
+    var canvasWidth = layout.canvas.width;
+    var k = (ui.canvas.getBoundingClientRect().width || canvasWidth) / canvasWidth;
+
+    // The safe-area guide, from the document's own margins.
+    var safe = layout.safe || { x: 0, y: 0 };
+    var guide = el("div", "ed-safe-guide");
+    guide.style.left = (safe.x * k) + "px";
+    guide.style.top = (safe.y * k) + "px";
+    guide.style.width = ((canvasWidth - safe.x * 2) * k) + "px";
+    guide.style.height = ((layout.canvas.height - safe.y * 2) * k) + "px";
+    guide.title = "安全区：所有元素默认都贴在这条线以内";
+    layer.appendChild(guide);
+
+    measure().forEach(function (entry) {
+      var element = entry.element;
+      if (!element || !element.id) return;
+
+      var box = el("div", "ed-handle");
+      box.classList.toggle("is-selected", element.id === selectedId);
+      box.setAttribute("data-id", element.id);
+
+      if (!entry.rect) {
+        // Not on air: no geometry to drag, but the layer list still selects it.
+        box.classList.add("is-offstage");
+        box.style.left = "0px";
+        box.style.top = "0px";
+        box.style.width = "0px";
+        box.style.height = "0px";
+        box.title = "这个元素在当前场景下不显示";
+        layer.appendChild(box);
+        return;
+      }
+
+      box.style.left = (entry.rect.left * k) + "px";
+      box.style.top = (entry.rect.top * k) + "px";
+      box.style.width = (entry.rect.width * k) + "px";
+      box.style.height = (entry.rect.height * k) + "px";
+
+      if (element.id === selectedId) {
+        var label = el("span", "ed-handle-label");
+        label.textContent = element.label || element.id;
+        box.appendChild(label);
+        var grip = el("span", "grip");
+        on(grip, "pointerdown", function (ev) { startResize(ev, element, entry.rect, k); });
+        box.appendChild(grip);
+      }
+
+      on(box, "pointerdown", function (ev) {
+        selectedId = element.id;
+        renderLayers();
+        renderInspector();
+        updateStatus();
+        startDrag(ev, element, k);
+      });
+
+      layer.appendChild(box);
+    });
+  }
+
+  var dragState = null;
+
+  function startDrag(ev, element, k) {
+    if (ev.target && ev.target.classList && ev.target.classList.contains("grip")) return;
+    ev.preventDefault();
+    dragState = {
+      mode: "move",
+      element: element,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      x0: toNum(element.x, 0),
+      y0: toNum(element.y, 0),
+      k: k
+    };
+    beginPointer(ev);
+  }
+
+  function startResize(ev, element, rect, k) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    dragState = {
+      mode: "resize",
+      element: element,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      width0: toNum(element.width, 0) || (rect.width / k),
+      height0: toNum(element.height, 0) || (rect.height / k),
+      k: k
+    };
+    beginPointer(ev);
+  }
+
+  function beginPointer(ev) {
+    try { ev.target.setPointerCapture(ev.pointerId); } catch (e) { /* not supported */ }
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", endPointer);
+  }
+
+  function onPointerMove(ev) {
+    if (!dragState) return;
+    var dx = (ev.clientX - dragState.startX) / dragState.k;
+    var dy = (ev.clientY - dragState.startY) / dragState.k;
+    var element = dragState.element;
+    var anchor = element.anchor || "topLeft";
+
+    if (dragState.mode === "move") {
+      // The offset runs inward from the anchored corner, so dragging toward that
+      // corner decreases it. Without this the element would move the wrong way
+      // whenever it is pinned to a right or bottom edge, which is half of them.
+      var right = anchor === "topRight" || anchor === "bottomRight";
+      var bottom = anchor === "bottomLeft" || anchor === "bottomRight";
+      element.x = Math.round(dragState.x0 + (right ? -dx : dx));
+      element.y = Math.round(dragState.y0 + (bottom ? -dy : dy));
+    } else {
+      // The handle tracks the rendered box, so the delta has to be divided by
+      // the element's own scale to become a width in the document's units.
+      var scale = effectiveScale(element);
+      element.width = Math.max(0, Math.round(dragState.width0 + dx / scale));
+      element.height = Math.max(0, Math.round(dragState.height0 + dy / scale));
+    }
+
+    markDirty();
+    renderHandles();
+    updateInspectorValues();
+  }
+
+  function updateInspectorValues() {
+    // Rebuilding the inspector on every pointer move would take the focus out of
+    // whatever field is being typed into, so only the numbers are refreshed.
+    var element = selected();
+    if (!element || !ui.inspector) return;
+    var inputs = ui.inspector.querySelectorAll("input[type=number]");
+    if (inputs.length >= 5) {
+      inputs[1].value = element.x;
+      inputs[2].value = element.y;
+      inputs[3].value = element.width;
+      inputs[4].value = element.height;
+    }
+  }
+
+  function endPointer() {
+    dragState = null;
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", endPointer);
+    renderInspector();
+  }
+
+  function effectiveScale(element) {
+    var fontScale = element.style && isFinite(element.style.fontScale) ? element.style.fontScale : 1;
+    var scale = (isFinite(element.scale) ? element.scale : 1) * fontScale;
+    return clamp(scale, 0.05, 16);
+  }
+
+  // ---- element operations ------------------------------------------------
+
+  function reorder(delta) {
+    var element = selected();
+    if (!element) return;
+    var index = layout.elements.indexOf(element);
+    var target = index + delta;
+    if (target < 0 || target >= layout.elements.length) return;
+    layout.elements.splice(index, 1);
+    layout.elements.splice(target, 0, element);
+    markDirty();
+    renderLayers();
+    renderHandles();
+  }
+
+  function duplicate() {
+    var element = selected();
+    if (!element) return;
+    var copy = clone(element);
+    copy.id = uniqueId(element.type);
+    copy.label = (element.label || element.type) + " 副本";
+    copy.x = toNum(element.x, 0) + 24;
+    copy.y = toNum(element.y, 0) + 24;
+    layout.elements.push(copy);
+    selectedId = copy.id;
+    markDirty();
+    renderLayers();
+    renderInspector();
+    renderHandles();
+    note("已复制元素 · " + copy.id);
+  }
+
+  /** Sane starting geometry for a freshly added element. */
+  var TYPE_DEFAULTS = {
+    matchBug: { anchor: "topLeft", x: 26, y: 22, width: 346, height: 0 },
+    eventInfo: { anchor: "topRight", x: 26, y: 22, width: 432, height: 0 },
+    timer: { anchor: "bottomRight", x: 26, y: 0, width: 0, height: 0 },
+    lowerThird: { anchor: "bottomLeft", x: 26, y: 0, width: 768, height: 0 },
+    ticker: { anchor: "bottomLeft", x: 0, y: 0, width: 1920, height: 53 },
+    announcement: { anchor: "center", x: 0, y: -130, width: 0, height: 0 },
+    frame: { anchor: "topLeft", x: 0, y: 0, width: 0, height: 0 },
+    text: { anchor: "topRight", x: 40, y: 120, width: 0, height: 0 }
+  };
+
+  function addElement(type) {
+    var entry = TYPES.filter(function (pair) { return pair[0] === type; })[0] || TYPES[7];
+    var defaults = TYPE_DEFAULTS[type] || TYPE_DEFAULTS.text;
+    var element = {
+      id: uniqueId(type),
+      type: type,
+      label: entry[1],
+      visible: true,
+      // A second ticker or a second announcement in the same scene would be two
+      // elements fighting for one slot, so a duplicate type starts switched off
+      // and finished work reported back to the operator instead of silently
+      // overlapping.
+      scenes: [],
+      anchor: defaults.anchor,
+      x: defaults.x,
+      y: defaults.y,
+      width: defaults.width,
+      height: defaults.height,
+      scale: 1,
+      opacity: 1,
+      text: type === "text" ? "文字 TEXT" : "",
+      binding: "",
+      style: { fontScale: 1, uppercase: false },
+      anim: { enter: "fade", update: "pop", durationMs: 420, easing: "outCubic" }
+    };
+    if (hasType(type)) {
+      element.visible = false;
+      note("已添加 " + entry[1] + "（默认隐藏：这个类型已经在版面里了，先调好再打开）");
+    } else {
+      note("已添加 " + entry[1]);
+    }
+    layout.elements.push(element);
+    selectedId = element.id;
+    markDirty();
+    renderLayers();
+    renderInspector();
+    renderHandles();
+  }
+
+  function hasType(type) {
+    return layout.elements.some(function (element) {
+      return element && element.type === type && element.id !== selectedId;
+    });
+  }
+
+  function uniqueId(base) {
+    var used = {};
+    layout.elements.forEach(function (element) { if (element) used[element.id] = true; });
+    if (!used[base]) return base;
+    for (var i = 2; i < 1000; i++) {
+      if (!used[base + "-" + i]) return base + "-" + i;
+    }
+    return base + "-" + Date.now();
+  }
+
+  function renderAddTypes() {
+    if (!ui.addType) return;
+    ui.addType.textContent = "";
+    TYPES.forEach(function (pair) {
+      var option = el("option");
+      option.value = pair[0];
+      option.textContent = pair[1];
+      ui.addType.appendChild(option);
+    });
+    ui.addType.value = "text";
+  }
+
+  function removeSelected() {
+    var element = selected();
+    if (!element) return;
+    var index = layout.elements.indexOf(element);
+    layout.elements.splice(index, 1);
+    selectedId = null;
+    markDirty();
+    renderLayers();
+    renderInspector();
+    renderHandles();
+    updateStatus();
+    note("已删除元素 · " + element.id);
+  }
+
+  // ---- talking to the server ---------------------------------------------
+
+  function switchPreset(name) {
+    if (!originOk) { note("请通过 http 打开本页", "bad"); return; }
+    if (dirty && !window.confirm("切换预设会丢弃当前未保存的改动，继续？")) return;
+    window.fetch("/api/layout?preset=" + encodeURIComponent(name), { cache: "no-store" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (doc) {
+        presets.current = name;
+        saved = null;
+        dirty = false;
+        adopt(doc, "预设 " + name);
+        note("已切换到预设 · " + name, "ok");
+      })
+      ["catch"](function (err) {
+        note("切换预设失败 · " + (err && err.message), "bad");
+      });
+  }
+
+  function save() {
+    if (!originOk) { note("请通过 http 打开本页", "bad"); return; }
+    var body = pretty(stripInternal(layout));
+    // While this is in flight, an incoming document is almost certainly the echo
+    // of our own save rather than another operator. Without the flag the editor
+    // reports its own save as a conflict, which teaches an operator to ignore the
+    // one warning that must never be ignored.
+    saveInFlight = true;
+    updateStatus();
+    window.fetch("/api/layout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body
+    }).then(function (res) {
+      return res.text().then(function (text) { return { ok: res.ok, status: res.status, text: text }; });
+    }).then(function (result) {
+      saveInFlight = false;
+      if (!result.ok) {
+        note("保存失败 · HTTP " + result.status + " " + result.text, "bad");
+        updateStatus();
+        return;
+      }
+      dirty = false;
+      ui.json.classList.remove("is-bad");
+      try {
+        var stored = JSON.parse(result.text);
+        layout = stored;
+        saved = clone(stored);
+        presets.current = layout.name || presets.current;
+        applyEditorTheme(layout.theme);
+        applyToFrame();
+        renderAll();
+      } catch (e) { /* a body we cannot read is not worth a second complaint */ }
+      note("已保存并广播", "ok");
+      updateStatus();
+    })["catch"](function (err) {
+      saveInFlight = false;
+      note("保存失败 · " + (err && err.message), "bad");
+      updateStatus();
+    });
+  }
+
+  function revert() {
+    if (!saved) return;
+    layout = clone(saved);
+    if (selectedId && !elementById(selectedId)) selectedId = null;
+    dirty = false;
+    applyEditorTheme(layout.theme);
+    applyToFrame();
+    renderAll();
+    note("已放弃改动");
+  }
+
+  function fetchLayout() {
+    if (!originOk || typeof window.fetch !== "function") return;
+    window.fetch("/api/layout", { cache: "no-store" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (doc) {
+        if (!doc) return;
+        if (dirty) {
+          // Reported, not applied. Another operator's save must not discard
+          // unsaved work without a person deciding that it should.
+          note("服务端版面已变化，但本页有未保存改动，未覆盖", "bad");
+          return;
+        }
+        adopt(doc, "GET /api/layout");
+        saved = clone(doc);
+      })
+      ["catch"](function (err) {
+        note("拉取版面失败 · " + (err && err.message), "bad");
+      });
+  }
+
+  function fetchPresets() {
+    if (!originOk || typeof window.fetch !== "function") return;
+    window.fetch("/api/presets", { cache: "no-store" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        if (!data || !Array.isArray(data.presets)) return;
+        presets = data;
+        renderPresets();
+      })
+      ["catch"](function () { renderPresets(); });
+  }
+
+  function fetchState() {
+    if (!originOk || typeof window.fetch !== "function") return;
+    window.fetch("/api/state", { cache: "no-store" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        if (data) {
+          raw = data;
+          updateStatus();
+        }
+      })
+      ["catch"](function () {});
+  }
+
+  // ---- local preview -----------------------------------------------------
+
+  /* These never reach the server. They exist so a package can be laid out
+     against representative numbers — a long team name, a four-digit score, a
+     stopped clock — without waiting for a real match to supply them. */
+
+  function preview(patch, label) {
+    if (!originOk) { note("请通过 http 打开本页", "bad"); return; }
+    window.fetch("/api/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch)
+    }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      note("预览数据 · " + label, "ok");
+    })["catch"](function (err) {
+      note("预览失败 · " + (err && err.message), "bad");
+    });
+  }
+
+  function clearPreview() {
+    window.fetch("/api/preview", { method: "DELETE" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        note("已清除预览数据", "ok");
+      })["catch"](function (err) {
+        note("清除预览失败 · " + (err && err.message), "bad");
+      });
+  }
+
+  function currentSides() {
+    return raw && Array.isArray(raw.sides) ? raw.sides : [];
+  }
+
+  function bumpSide(index) {
+    var sides = currentSides().map(function (side) { return { id: side.id, score: toNum(side.score, 0) }; });
+    while (sides.length <= index) sides.push({ id: index === 0 ? "home" : "away", score: 0 });
+    sides[index].score += 1;
+    preview({ sides: sides }, (index === 0 ? "主队" : "客队") + " +1");
+  }
+
+  function toggleAnnouncement() {
+    var ann = isObject(raw && raw.announcement) ? raw.announcement : {};
+    var next = !(ann.visible === true);
+    var title = ann.title;
+    if (next && !title) {
+      var event = isObject(raw && raw.event) ? raw.event : {};
+      title = event.stage || event.name || "ROUND 3";
+    }
+    preview({ announcement: { visible: next, title: next ? title : ann.title, subtitle: ann.subtitle || "" } },
+      next ? "显示公告" : "隐藏公告");
+  }
+
+  function toggleTicker() {
+    var current = raw && Array.isArray(raw.ticker) ? raw.ticker : [];
+    preview({
+      ticker: current.length
+        ? []
+        : ["这是一条预览用的跑马灯消息", "长消息会滚动 不会挤掉旁边的元素", "第三段用来检查循环接缝"]
+    }, current.length ? "清空跑马灯" : "添加跑马灯");
+  }
+
+  function toggleClock() {
+    var clock = isObject(raw && raw.clock) ? raw.clock : {};
+    var running = !(clock.running === true);
+    preview({
+      clock: {
+        label: clock.label || "比赛计时",
+        value: clock.value || "00:00",
+        running: running
+      }
+    }, running ? "计时开始" : "计时停止");
+  }
+
+  function toggleLower() {
+    var lower = isObject(raw && raw.lowerThird) ? raw.lowerThird : {};
+    var sides = currentSides();
+    var next = !(lower.visible === true);
+    preview({
+      lowerThird: {
+        visible: next,
+        side: lower.side || (sides[0] ? sides[0].id : "home")
+      }
+    }, next ? "显示选手条" : "隐藏选手条");
+  }
+
+  function setScene(scene) {
+    preview({ scene: scene }, "场景 " + scene);
+    var buttons = ui.sceneRow.getElementsByTagName("button");
+    for (var i = 0; i < buttons.length; i++) {
+      var active = buttons[i].getAttribute("data-scene") === scene;
+      buttons[i].classList.toggle("is-active", active);
+      buttons[i].setAttribute("aria-pressed", active ? "true" : "false");
+    }
+  }
+
+  // ---- the stream --------------------------------------------------------
+
+  function scheduleRetry() {
+    var delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.pow(1.7, Math.min(attempt - 1, 8)));
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(openStream, delay);
+  }
+
+  function dropStream(reason) {
+    if (sse) {
+      try { sse.close(); } catch (e) { /* already gone */ }
+      sse = null;
+    }
+    sseOpen = false;
+    attempt++;
+    updateStatus();
+    note(reason + "，重连 #" + attempt, "bad");
+    scheduleRetry();
+  }
+
+  function openStream() {
+    if (!originOk) return;
+    if (sse) {
+      try { sse.close(); } catch (e) { /* already gone */ }
+      sse = null;
+    }
+
+    var src;
+    try {
+      src = new EventSource("/events");
+    } catch (e) {
+      dropStream("无法建立 SSE 连接");
+      return;
+    }
+    sse = src;
+
+    src.onopen = function () {
+      if (sse !== src) return;
+      sseOpen = true;
+      attempt = 0;
+      note("SSE 已连接", "ok");
+      updateStatus();
+      fetchState();
+      fetchLayout();
+    };
+
+    src.onmessage = function (ev) {
+      if (sse !== src) return;
+      sseOpen = true;
+      handleState(ev && ev.data);
+      updateStatus();
+    };
+
+    src.addEventListener("layout", function (ev) {
+      if (sse !== src) return;
+      handleRemoteLayout(ev && ev.data);
+    });
+
+    src.onerror = function () {
+      if (sse !== src) return;   // EventSource retries on its own; we do not
+      dropStream("SSE 断开");
+    };
+  }
+
+  function handleState(text) {
+    if (typeof text !== "string") return;
+    var trimmed = text.trim();
+    if (!trimmed || trimmed.charAt(0) === ":") return;
+    try {
+      var parsed = JSON.parse(trimmed);
+      if (isObject(parsed)) {
+        raw = parsed;
+        updateStatus();
+        renderScope();
+      }
+    } catch (e) {
+      note("收到无法解析的状态，已忽略", "bad");
+    }
+  }
+
+  /**
+   * Whose package every screen is drawing.
+   *
+   * <p>Two scopes, and the difference decides whether anything done on this page is
+   * visible at all:
+   *
+   *   local   this machine's file. Drives this machine's OBS overlay and this
+   *           machine's HUD, changes nothing for anyone else, needs no permission.
+   *   server  an operator's package, which every client draws instead of its own.
+   *
+   * The editor always edits the local document, which is the point — the operator's
+   * own packaging work has to stay editable during a match. So when a server package
+   * is on air the banner has to say that plainly, or the tool looks broken while it is
+   * in fact working correctly.
+   */
+  function renderScope() {
+    var scope = raw && raw.layoutScope === "server" ? "server" : "local";
+    var author = raw && raw.layoutAuthor ? raw.layoutAuthor : "";
+    var onAir = raw && raw.layoutName ? raw.layoutName : "";
+
+    setStatus(ui.scopeStatus, ui.scopeStatusText, scope === "server" ? "warn" : true,
+      scope === "server" ? "全服版面" : "本机版面");
+
+    if (scope !== "server") {
+      ui.scopeNote.classList.add("is-hidden");
+      return;
+    }
+    ui.scopeNote.textContent =
+      "当前画面上生效的是全服版面（" + (onAir || "未命名") + "，由 " + (author || "管理员") +
+      " 设定），所有客户端与包装页都在画它。" +
+      "这一页编辑的是本机版面：只影响你这台机器，不影响别人，也不需要权限；" +
+      "但全服版面生效期间，你的改动不会显示，直到管理员执行 /stevehud layout clear。";
+    ui.scopeNote.classList.remove("is-hidden");
+  }
+
+  function handleRemoteLayout(text) {
+    if (typeof text !== "string") return;
+    var trimmed = text.trim();
+    if (!trimmed) return;
+    var parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e) {
+      note("收到无法解析的版面，已忽略", "bad");
+      return;
+    }
+    if (!isObject(parsed) || !isObject(parsed.canvas)) return;
+
+    if (dirty && !saveInFlight) {
+      // See fetchLayout: reported rather than applied.
+      note("服务端版面被改动了，但本页有未保存改动，未覆盖", "bad");
+      return;
+    }
+    // Our own save echoes back here too. Adopting it is how the editor ends up
+    // showing exactly what was stored, normalisation included.
+    adopt(parsed, "");
+    saved = clone(parsed);
+    dirty = false;
+    if (ui.layoutStatusText) {
+      ui.layoutStatusText.textContent = (parsed.name || "未命名") + " · " + parsed.elements.length + " 个元素";
+    }
+    note("版面已同步 · " + (parsed.name || ""));
+  }
+
+  // ---- canvas sizing -----------------------------------------------------
+
+  function resizeCanvas() {
+    var wrap = ui.canvasWrap;
+    var canvas = ui.canvas;
+    if (!wrap || !canvas || !layout) return;
+    var availableW = wrap.clientWidth - 32;
+    var availableH = wrap.clientHeight - 32;
+    if (availableW <= 0 || availableH <= 0) return;
+    if (fitZoom) {
+      zoom = clamp(Math.min(availableW / layout.canvas.width, availableH / layout.canvas.height),
+        0.05, 1);
+    }
+    // The outer box is the size it looks; the inner one holds the design surface
+    // and is the only thing scaled. The handles then work in plain editor pixels
+    // and never have to divide by a zoom factor.
+    canvas.style.width = (layout.canvas.width * zoom) + "px";
+    canvas.style.height = (layout.canvas.height * zoom) + "px";
+    ui.scaler.style.transform = "scale(" + zoom + ")";
+    setZoomStatus();
+    renderHandles();
+  }
+
+  // ---- boot --------------------------------------------------------------
+
+  function collect() {
+    ui.pageStatus = document.getElementById("pageStatus");
+    ui.pageStatusText = document.getElementById("pageStatusText");
+    ui.dataStatus = document.getElementById("dataStatus");
+    ui.dataStatusText = document.getElementById("dataStatusText");
+    ui.saveStatus = document.getElementById("saveStatus");
+    ui.saveStatusText = document.getElementById("saveStatusText");
+    ui.zoomStatus = document.getElementById("zoomStatus");
+    ui.zoomStatusText = document.getElementById("zoomStatusText");
+    ui.layoutStatus = document.getElementById("layoutStatus");
+    ui.layoutStatusText = document.getElementById("layoutStatusText");
+    ui.scopeStatus = document.getElementById("scopeStatus");
+    ui.scopeStatusText = document.getElementById("scopeStatusText");
+    ui.scopeNote = document.getElementById("scopeNote");
+    ui.presetRow = document.getElementById("presetRow");
+    ui.layerList = document.getElementById("layerList");
+    ui.inspector = document.getElementById("inspector");
+    ui.theme = document.getElementById("theme");
+    ui.json = document.getElementById("json");
+    ui.log = document.getElementById("log");
+    ui.sceneRow = document.getElementById("sceneRow");
+    ui.canvas = document.getElementById("canvas");
+    ui.canvasWrap = document.getElementById("canvasWrap");
+    ui.scaler = document.getElementById("scaler");
+    ui.handles = document.getElementById("handles");
+    ui.frame = document.getElementById("overlayFrame");
+    ui.btnSave = document.getElementById("btnSave");
+    ui.btnSaveLabel = document.getElementById("btnSaveLabel");
+    ui.btnRevert = document.getElementById("btnRevert");
+    ui.btnDelete = document.getElementById("btnDelete");
+    ui.addType = document.getElementById("addType");
+  }
+
+  function boot() {
+    collect();
+
+    on(ui.btnSave, "click", save);
+    on(ui.btnRevert, "click", revert);
+    on(document.getElementById("btnAddText"), "click", function () {
+      addElement(ui.addType.value);
+    });
+    on(ui.btnDelete, "click", removeSelected);
+    on(document.getElementById("btnFit"), "click", function () {
+      fitZoom = true;
+      resizeCanvas();
+    });
+    on(document.getElementById("btnFormat"), "click", function () {
+      try {
+        ui.json.value = pretty(JSON.parse(ui.json.value));
+        ui.json.classList.remove("is-bad");
+      } catch (e) {
+        ui.json.classList.add("is-bad");
+        note("JSON 无法解析", "bad");
+      }
+    });
+    on(document.getElementById("btnApplyJson"), "click", function () {
+      var parsed;
+      try {
+        parsed = JSON.parse(ui.json.value);
+      } catch (e) {
+        ui.json.classList.add("is-bad");
+        note("JSON 无法解析，未应用", "bad");
+        return;
+      }
+      ui.json.classList.remove("is-bad");
+      if (!isObject(parsed) || !isObject(parsed.canvas)) {
+        ui.json.classList.add("is-bad");
+        note("这段 JSON 不像版面文档", "bad");
+        return;
+      }
+      layout = parsed;
+      if (!Array.isArray(layout.elements)) layout.elements = [];
+      dirty = true;
+      applyEditorTheme(layout.theme);
+      applyToFrame();
+      renderAll();
+      note("已从 JSON 应用");
+    });
+    on(ui.json, "input", function () {
+      var ok = true;
+      try { JSON.parse(ui.json.value); } catch (e) { ok = false; }
+      ui.json.classList.toggle("is-bad", ui.json.value.trim() !== "" && !ok);
+    });
+    on(document.getElementById("btnExport"), "click", function () {
+      var blob = new Blob([pretty(stripInternal(layout))], { type: "application/json" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "stevehud-layout.json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      note("已导出 JSON");
+    });
+    on(document.getElementById("btnImport"), "click", function () {
+      document.getElementById("importFile").click();
+    });
+    on(document.getElementById("importFile"), "change", function (ev) {
+      var file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var parsed;
+        try {
+          parsed = JSON.parse(String(reader.result));
+        } catch (e) {
+          note("文件不是合法 JSON", "bad");
+          return;
+        }
+        if (!isObject(parsed) || !isObject(parsed.canvas)) {
+          note("文件不像版面文档", "bad");
+          return;
+        }
+        layout = parsed;
+        if (!Array.isArray(layout.elements)) layout.elements = [];
+        dirty = true;
+        applyEditorTheme(layout.theme);
+        applyToFrame();
+        renderAll();
+        note("已导入 · " + file.name, "ok");
+      };
+      reader.readAsText(file);
+      ev.target.value = "";
+    });
+
+    // Local preview controls.
+    on(document.getElementById("btnHome"), "click", function () { bumpSide(0); });
+    on(document.getElementById("btnAway"), "click", function () { bumpSide(1); });
+    on(document.getElementById("btnAnnounce"), "click", toggleAnnouncement);
+    on(document.getElementById("btnTicker"), "click", toggleTicker);
+    on(document.getElementById("btnClock"), "click", toggleClock);
+    on(document.getElementById("btnLower"), "click", toggleLower);
+    on(document.getElementById("btnClearPreview"), "click", clearPreview);
+    on(ui.sceneRow, "click", function (ev) {
+      var target = ev.target && ev.target.closest ? ev.target.closest("button[data-scene]") : null;
+      if (target) setScene(target.getAttribute("data-scene"));
+    });
+
+    // Keyboard: the shortcuts an operator reaches for while looking at the
+    // canvas rather than at the inspector.
+    on(document, "keydown", function (ev) {
+      var tag = ev.target && ev.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (ev.key === "Escape") {
+        selectedId = null;
+        renderLayers();
+        renderInspector();
+        renderHandles();
+        updateStatus();
+        return;
+      }
+      var element = selected();
+      if (!element) return;
+      var step = ev.shiftKey ? 10 : 1;
+      var anchor = element.anchor || "topLeft";
+      var right = anchor === "topRight" || anchor === "bottomRight";
+      var bottom = anchor === "bottomLeft" || anchor === "bottomRight";
+      var handled = true;
+      var moved = false;
+      switch (ev.key) {
+        case "ArrowLeft": element.x = toNum(element.x, 0) + (right ? step : -step); moved = true; break;
+        case "ArrowRight": element.x = toNum(element.x, 0) + (right ? -step : step); moved = true; break;
+        case "ArrowUp": element.y = toNum(element.y, 0) + (bottom ? step : -step); moved = true; break;
+        case "ArrowDown": element.y = toNum(element.y, 0) + (bottom ? -step : step); moved = true; break;
+        case "Delete":
+        case "Backspace": removeSelected(); break;
+        default: handled = false;
+      }
+      if (handled) {
+        ev.preventDefault();
+        markDirty();
+        renderHandles();
+        renderInspector();
+      }
+    });
+
+    // The preview iframe finishing its load is the point at which the document
+    // can actually be handed to it.
+    on(ui.frame, "load", function () {
+      applyToFrame();
+      // The overlay sets up its own layout on load; re-push after a beat so the
+      // editor's unsaved copy wins over whatever was on the server.
+      setTimeout(function () { applyToFrame(); renderHandles(); }, 250);
+    });
+
+    on(window, "resize", function () {
+      fitZoom = true;
+      resizeCanvas();
+    });
+
+    window.addEventListener("beforeunload", function (ev) {
+      clearTimeout(retryTimer);
+      if (sse) {
+        try { sse.close(); } catch (e) { /* already gone */ }
+        sse = null;
+      }
+      if (dirty) {
+        // The one browser dialog worth keeping: leaving with unsaved layout work
+        // is expensive to reproduce.
+        ev.preventDefault();
+        ev.returnValue = "";
+      }
+    });
+
+    renderPresets();
+    renderAddTypes();
+    renderLayers();
+    updateStatus();
+
+    if (!originOk) {
+      note("file:// 打开时无法连接，请用 http://127.0.0.1:8787/editor/", "bad");
+      return;
+    }
+
+    note("编辑器已启动");
+    fetchPresets();
+    fetchLayout();
+    fetchState();
+    openStream();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,45 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Minecraft dev runs
+run/
+runs/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+bin/
+out/
+
+# Web
+web/node_modules/
+web/dist/
+
+# Local test server: keep the configuration, ignore everything it generates.
+test-server/*.jar
+test-server/plugins/*.jar
+test-server/world*/
+test-server/logs/
+test-server/cache/
+test-server/libraries/
+test-server/versions/
+test-server/.paper-remapped/
+test-server/banned-ips.json
+test-server/banned-players.json
+test-server/ops.json
+test-server/whitelist.json
+test-server/usercache.json
+test-server/version_history.json
+test-server/help.yml
+test-server/commands.yml
+test-server/permissions.yml
+
+*.log

@@ -1,0 +1,26 @@
+allprojects {
+    group = rootProject.maven_group
+    version = rootProject.mod_version
+}
+
+tasks.register('printVersionMatrix') {
+    group = 'stevehud'
+    description = 'Prints the Minecraft / yarn / Fabric API / ClothConfig version of every mod module.'
+    doLast {
+        println ''
+        println sprintf('%-12s %-16s %-22s %-18s %s', 'MODULE', 'MINECRAFT', 'YARN', 'FABRIC-API', 'CLOTH-CONFIG')
+        println '-' * 100
+        rootProject.subprojects.findAll { it.path.startsWith(':mod:mc') }.each { p ->
+            def props = new Properties()
+            def f = p.file('gradle.properties')
+            if (f.exists()) f.withInputStream { props.load(it) }
+            println sprintf('%-12s %-16s %-22s %-18s %s',
+                    p.name,
+                    props.getProperty('minecraft_version', '?'),
+                    props.getProperty('yarn_mappings', '?'),
+                    props.getProperty('fabric_api_version', '?'),
+                    props.getProperty('cloth_config_version', '?'))
+        }
+        println ''
+    }
+}

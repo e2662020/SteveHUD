@@ -1,0 +1,45 @@
+pluginManagement {
+    repositories {
+        // Chinese mirrors first; they carry most of what we need and are far
+        // quicker from here. The upstream repositories stay listed as fallback,
+        // because Fabric Loom and the Paper API are not mirrored.
+        maven { name = 'Aliyun-GradlePlugin'; url = 'https://maven.aliyun.com/repository/gradle-plugin' }
+        maven { name = 'Aliyun-Public'; url = 'https://maven.aliyun.com/repository/public' }
+        gradlePluginPortal()
+        maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+        mavenCentral()
+    }
+}
+
+plugins {
+    // Provisions the Java 21 toolchain into ~/.gradle/jdks instead of requiring a
+    // system-wide JDK install.
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'SteveHUD'
+
+// ---- Shared, zero-Minecraft code -------------------------------------------
+// `protocol` defines the wire format once; `mod:common` holds client-side logic
+// that never touches a Minecraft class. Keeping both MC-free is what lets the
+// version modules share code without any cross-version remapping.
+include 'protocol'
+include 'mod:common'
+
+// ---- Server side: one jar for every 1.21.x --------------------------------
+include 'plugin'
+
+// ---- Client side: one Loom project per curated MC version ------------------
+// All client code lives in mod/client-mc; these modules carry only the version
+// data that fabric.mod.json is expanded with, so adding a version is a two-file
+// change at most.
+//
+// These are the expensive ones: configuring them makes Loom download and remap a
+// Minecraft jar per version. Pass -PskipMods to leave them out when working on
+// the Minecraft-free half, which turns a multi-minute feedback loop into seconds.
+if (!providers.gradleProperty('skipMods').isPresent()) {
+    include 'mod:mc1.21.1'
+    include 'mod:mc1.21.4'
+    include 'mod:mc1.21.8'
+    include 'mod:mc1.21.11'
+}

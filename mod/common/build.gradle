@@ -1,0 +1,45 @@
+// Client-side logic that never touches a Minecraft class: match state mirror,
+// layout document model, layout evaluation, animation math, the local graphics
+// server and the OBS control client.
+//
+// This module having no Minecraft dependency is a load-bearing property, not an
+// accident: it is what allows all the version modules to share it verbatim with
+// no cross-version remapping step and no `namedElements` shadowing.
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    maven { name = 'Aliyun-Public'; url = 'https://maven.aliyun.com/repository/public' }
+    mavenCentral()
+}
+
+dependencies {
+    api project(':protocol')
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+base {
+    archivesName = 'stevehud-mod-common'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    withSourcesJar()
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        exceptionFormat = 'full'
+    }
+}

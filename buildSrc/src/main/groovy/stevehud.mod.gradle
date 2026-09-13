@@ -1,0 +1,100 @@
+// Convention plugin for a SteveHUD client mod module (one per Minecraft version).
+//
+// Contract: the consuming module declares its own version data in a
+// `gradle.properties` file next to its build script. Those properties must be
+// readable at plugin-application time, which is exactly why they live in
+// gradle.properties rather than in an `ext { }` block (a `plugins { }` block runs
+// before the rest of the build script body, so `ext` would not be set yet).
+//
+//   minecraft_version           e.g. 1.21.4
+//   yarn_mappings               e.g. 1.21.4+build.8
+//   fabric_api_version          e.g. 0.119.4+1.21.4
+//   cloth_config_version        e.g. 17.0.144
+//   modmenu_version             e.g. 13.0.4
+//   minecraft_dependency_range  e.g. [1.21.4,1.21.5)  -- used in fabric.mod.json
+//
+// Every module compiles the same code. The only per-version inputs are the ones
+// above, so adding a Minecraft version is a two-file change and nothing else.
+
+plugins {
+    id 'fabric-loom'
+    id 'java-library'
+}
+
+group = rootProject.maven_group
+version = rootProject.mod_version
+
+// Names the artifact after the version it targets, so a build folder holding
+// five jars is still readable.
+base {
+    archivesName = "stevehud-${project.name}"
+}
+
+repositories {
+    maven { name = 'Aliyun-Public'; url = 'https://maven.aliyun.com/repository/public' }
+    maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+    maven { name = 'Shedaniel'; url = 'https://maven.shedaniel.me/' }
+    maven { name = 'TerraformersMC'; url = 'https://maven.terraformersmc.com/releases/' }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+
+    modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // ClothConfig drives the mod's own settings screen (client preferences only).
+    modImplementation "me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}"
+
+    // ModMenu is optional and only supplies the settings entry point.
+    modImplementation("com.terraformersmc:modmenu:${project.modmenu_version}") {
+        exclude group: 'net.fabricmc.fabric-api'
+    }
+
+    // Shared code. Neither module references a Minecraft class, so no remapping
+    // is involved and they can be nested into every version jar as-is.
+    implementation project(':protocol')
+    implementation project(':mod:common')
+    include project(':protocol')
+    include project(':mod:common')
+}
+
+// The payloads, the client entry point and fabric.mod.json touch the Minecraft
+// API but are byte-identical across every supported version, so they live in one
+// directory that all modules compile rather than in five drifting copies.
+// Per-version code goes in this module's own src/ and nowhere else.
+sourceSets {
+    main {
+        java.srcDir rootProject.file('mod/client-mc/src/main/java')
+        resources.srcDir rootProject.file('mod/client-mc/src/main/resources')
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_version', project.minecraft_version
+    inputs.property 'minecraft_range', project.minecraft_dependency_range
+    inputs.property 'cloth_config_version', project.cloth_config_version
+    inputs.property 'loader_version', rootProject.loader_version
+
+    filesMatching('fabric.mod.json') {
+        expand(
+                version               : project.version,
+                minecraft_version     : project.minecraft_version,
+                minecraft_range       : project.minecraft_dependency_range,
+                cloth_config_version  : project.cloth_config_version,
+                loader_version        : rootProject.loader_version
+        )
+    }
+}

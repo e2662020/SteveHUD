@@ -1,0 +1,19 @@
+name: SteveHUD
+version: '${version}'
+main: com.rate.stevehud.plugin.SteveHudPlugin
+api-version: '1.21'
+description: Esports broadcast graphics data source — authoritative match state published to SteveHUD clients.
+authors: [RATE]
+load: POSTWORLD
+
+commands:
+  stevehud:
+    description: SteveHUD match control and diagnostics.
+    usage: /stevehud <status|resend>  (the settings screen is the client command /stevehudconfig)
+    aliases: [shud]
+    permission: stevehud.admin
+
+permissions:
+  stevehud.admin:
+    description: Full control over SteveHUD.
+    default: op

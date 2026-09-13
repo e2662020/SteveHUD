@@ -1,0 +1,9 @@
+{
+  "name": "stevehud-protocol-probe",
+  "private": true,
+  "type": "module",
+  "description": "Connects to a local server as a headless client and reports the SteveHUD plugin-channel payloads it receives.",
+  "dependencies": {
+    "mineflayer": "^4.39.0"
+  }
+}

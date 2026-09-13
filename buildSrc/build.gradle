@@ -1,0 +1,17 @@
+plugins {
+    id 'groovy-gradle-plugin'
+}
+
+repositories {
+    maven { name = 'Aliyun-GradlePlugin'; url = 'https://maven.aliyun.com/repository/gradle-plugin' }
+    maven { name = 'Aliyun-Public'; url = 'https://maven.aliyun.com/repository/public' }
+    gradlePluginPortal()
+    maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+    mavenCentral()
+}
+
+dependencies {
+    // Fabric Loom has to be on the buildSrc classpath for the `stevehud.mod`
+    // convention plugin to be able to apply it.
+    implementation "fabric-loom:fabric-loom.gradle.plugin:${project.loom_version}"
+}

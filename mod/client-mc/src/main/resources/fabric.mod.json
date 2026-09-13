@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "stevehud",
+  "version": "${version}",
+  "name": "SteveHUD",
+  "description": "Esports broadcast graphics for Minecraft competitions. Renders the match graphics package authored in SteveHUD's layout editor, and serves it to OBS on localhost.",
+  "authors": [
+    "RATE"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.rate.stevehud.mod.mc.SteveHudClient"
+    ],
+    "modmenu": [
+      "com.rate.stevehud.mod.mc.config.ModMenuIntegration"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_range}",
+    "java": ">=21",
+    "cloth-config": ">=${cloth_config_version}"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}

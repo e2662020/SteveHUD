@@ -1,0 +1,53 @@
+// The server half of SteveHUD.
+//
+// One jar covers the whole 1.21.x range: the Bukkit API surface we rely on is
+// stable within a major version, so unlike the mod there is no per-version build.
+plugins {
+    id 'java-library'
+    id 'com.gradleup.shadow' version '9.0.0-beta4'
+}
+
+repositories {
+    maven { name = 'Aliyun-Public'; url = 'https://maven.aliyun.com/repository/public' }
+    maven { name = 'PaperMC'; url = 'https://repo.papermc.io/repository/maven-public/' }
+    mavenCentral()
+}
+
+dependencies {
+    // Compiled against the Paper API but restricted to the Spigot-compatible
+    // surface, so the jar also loads on plain Spigot.
+    compileOnly "io.papermc.paper:paper-api:${rootProject.paper_api_version}"
+
+    implementation project(':protocol')
+}
+
+base {
+    archivesName = 'SteveHUD'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('plugin.yml') {
+        expand(version: project.version)
+    }
+}
+
+tasks.named('shadowJar') {
+    archiveClassifier = 'all'
+    // Relocate Gson so we can never collide with the server's own copy or with
+    // another plugin that bundles a different version.
+    relocate 'com.google.gson', 'com.rate.stevehud.libs.gson'
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('shadowJar')
+}

@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SteveHUD 包装页 (Overlay)</title>
+<link rel="stylesheet" href="../shared/stevehud.css">
+</head>
+<body class="overlay-page">
+
+<!--
+  SteveHUD broadcast package.
+
+  Point OBS at http://127.0.0.1:8787/overlay/ as a browser source at 1920x1080.
+  The page background is transparent on purpose: only the elements paint,
+  everything else shows the game.
+
+  NOTHING about the package is written in this file. Which elements exist, where
+  they sit, how big they are, what colour they are and how they arrive all come
+  from a layout document fetched from the local graphics server — the same
+  document the in-game HUD draws and the layout editor edits. This page is the
+  renderer, and only the renderer, so the stream and the players' screens cannot
+  disagree about the package.
+
+  Three inputs drive every pixel below:
+
+    GET /api/layout + the "layout" SSE event   what to draw and where
+    GET /api/state  + the default SSE event    the match data to draw
+    one requestAnimationFrame loop             the wall clock and the marquee
+
+  A layout edit is also accepted by postMessage from the editor, which is how
+  the editor gives live feedback while an element is being dragged instead of
+  waiting for a save.
+-->
+
+<div class="stage" id="stage">
+
+  <!-- Health of the page's own link, and an honest marker for local preview
+       data. Only on screen when something needs saying. -->
+  <div class="status-chip" id="statusChip">
+    <i class="dot status-dot"></i>
+    <span class="status-text clip" id="statusText"></span>
+  </div>
+
+</div>
+
+<script>
+/* SteveHUD overlay.
+ *
+ * A renderer for the layout document. The shape is:
+ *
+ *   elements  a registry of component builders, one per element type, each
+ *             able to mount its markup and to update it from the match state
+ *   layout    diff the incoming document against the current one, mounting and
+ *             removing elements, then positioning every one of them
+ *   state     feed the match data into the mounted components
+ *
+ * Three rules matter more than the rest:
+ *
+ *   * the layout document is the only source of position, size and colour. If
+ *     something looks wrong on air it must be fixable in the editor, not here;
+ *   * a malformed payload is discarded and the last good state stays on screen.
+ *     During a broadcast the previous scoreboard beats a blank one;
+ *   * every element is optional and hides itself rather than drawing an empty
+ *     box, so a document missing a ticker does not leave a bare strip.
+ *
+ * No framework, no build step, no network beyond this machine.
+ */
+(function () {
+  "use strict";
+
+  // ---- the element registry ----------------------------------------------
+
+  /* Design pixel -> CSS pixel. The one place viewport size is consulted. */
+  var unit = 1;
+
+  function px(design) {
+    return (design * unit) + "px";
+  }
+
+  function el(tag, className) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    return node;
+  }
+
+  function setText(node, text) {
+    // textContent, never innerHTML: data never becomes markup.
+    if (node && node.textContent !== text) node.textContent = text;
+  }
+
+  function setVar(node, name, value) {
+    if (node.__vars === undefined) node.__vars = {};
+    if (node.__vars[name] === value) return;
+    node.__vars[name] = value;
+    node.style.setProperty(name, value);
+  }
+
+  /* Removes and re-adds a class across a forced reflow, which is the only
+     reliable way to replay a CSS transition or animation. */
+  function restart(node, cls) {
+    node.classList.remove(cls);
+    void node.offsetWidth;
+    node.classList.add(cls);
+  }
+
+  function log(msg) {
+    if (window.console && console.warn) console.warn("[SteveHUD overlay] " + msg);
+  }
+
+  /* Dark or light text on a team colour block. Proper sRGB relative luminance
+     (gamma-decoded), because the naive weighted average of the encoded values
+     calls a mid blue "light" and puts white text on it at 2.9:1 contrast. */
+  function rgbOf(color) {
+    var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color || ""));
+    if (!m) return null;
+    var h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function channel(v) {
+    var s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  }
+
+  function inkOn(color) {
+    var c = rgbOf(color);
+    if (!c) return "#0b0e14";
+    var l = 0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2]);
+    return l > 0.179 ? "#0b0e14" : "#ffffff";
+  }
+
+  function rgba(color, alpha) {
+    var c = rgbOf(color);
+    return c ? "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha + ")" : null;
+  }
+
+  /* A colour as a CSS custom-property value. Anything that is not a plain hex
+     value is dropped for the fallback, because these reach the DOM as style and
+     the document is edited by hand. */
+  var COLOR_RE = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+  function color(value, fallback) {
+    return typeof value === "string" && COLOR_RE.test(value.trim()) ? value.trim() : fallback;
+  }
+
+  // ---- state --------------------------------------------------------------
+
+  var layout = null;         // the document being drawn
+  var state = null;          // the last normalised match state
+  var mounted = [];          // {id, type, node, body, component, element}
+  var tickerOn = false;
+
+  function stateOrDefault() {
+    return state || { sides: [], ticker: [], event: {}, clock: {}, announcement: {}, lowerThird: {} };
+  }
+
+  // ---- component builders -------------------------------------------------
+
+  /* Each returns { body, update(state, element) } where body is the markup and
+     update writes the match data into it. Anything that needs to react to a
+     *change* rather than to a value keeps its own previous reading. */
+
+  function buildMatchBug() {
+    var body = el("div", "el-body panel panel-bug");
+    var head = el("div", "bug-head");
+    var badge = el("span", "live-badge");
+    badge.appendChild(el("i", "dot live-dot"));
+    badge.appendChild(document.createTextNode("LIVE"));
+    var clock = el("span", "wall-clock");
+    head.appendChild(badge);
+    head.appendChild(clock);
+    var rows = el("div", "bug-rows");
+    var empty = el("div", "bug-empty clip");
+    empty.textContent = "等待数据";
+    body.appendChild(head);
+    body.appendChild(rows);
+    body.appendChild(empty);
+
+    var sideRows = {};
+    return {
+      body: body,
+      update: function (s) {
+        var prevById = {};
+        var previous = this._prevSides || [];
+        previous.forEach(function (side) { prevById[side.id] = side; });
+
+        var seen = {};
+        s.sides.forEach(function (side, index) {
+          var row = sideRows[side.id];
+          if (!row) {
+            row = buildSideRow();
+            sideRows[side.id] = row;
+            rows.appendChild(row.root);
+          }
+          seen[side.id] = true;
+          setText(row.code, side.short);
+          setText(row.name, side.name);
+          row.code.classList.toggle("is-blank", side.short === "");
+
+          if (row.color !== side.color) {
+            row.color = side.color;
+            setVar(row.root, "--team", side.color);
+            setVar(row.root, "--team-dim", rgba(side.color, 0.13) || "rgba(255,255,255,0.06)");
+            setVar(row.root, "--team-edge", rgba(side.color, 0.5) || "rgba(255,255,255,0.25)");
+            setVar(row.root, "--team-flash", rgba(side.color, 0.42) || "rgba(255,255,255,0.2)");
+          }
+
+          // Score last: the pop compares against the previous state, and the
+          // first render must not fire it.
+          var scoreText = String(side.score);
+          var before = prevById[side.id];
+          if (row.score.textContent !== scoreText) {
+            row.score.textContent = scoreText;
+            if (before && before.score !== side.score) bump(row);
+          }
+
+          // Keep DOM order equal to the array order, so a side that moves
+          // position moves on screen too.
+          var target = rows.children[index];
+          if (target !== row.root) rows.insertBefore(row.root, target || null);
+        });
+
+        Object.keys(sideRows).forEach(function (id) {
+          if (!seen[id]) {
+            var row = sideRows[id];
+            clearTimeout(row.timer);
+            if (row.root.parentNode) row.root.parentNode.removeChild(row.root);
+            delete sideRows[id];
+          }
+        });
+
+        empty.classList.toggle("is-blank", s.sides.length > 0);
+        this._prevSides = s.sides.slice();
+      },
+      tick: function (now) {
+        var d = new Date(now);
+        setText(clock, pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()));
+      }
+    };
+  }
+
+  function buildSideRow() {
+    var root = el("div", "side-row");
+    var code = el("span", "side-code clip");
+    var name = el("span", "side-name clip");
+    var score = el("span", "side-score");
+    score.addEventListener("animationend", function () {
+      score.classList.remove("is-bumped");
+    });
+    root.appendChild(code);
+    root.appendChild(name);
+    root.appendChild(score);
+    return { root: root, code: code, name: name, score: score, color: "", timer: 0 };
+  }
+
+  function bump(row) {
+    // The score pops (keyframes); the band flashes and fades back (transition
+    // plus one timeout). Two mechanisms because a transition can be removed by a
+    // timer, and a keyframe cannot restart without one.
+    restart(row.score, "is-bumped");
+    restart(row.root, "is-bumped");
+    clearTimeout(row.timer);
+    row.timer = setTimeout(function () {
+      row.root.classList.remove("is-bumped");
+    }, 90);
+  }
+
+  function buildEventInfo() {
+    var body = el("div", "el-body panel panel-event");
+    var name = el("div", "event-name clip");
+    var stage = el("div", "event-stage clip");
+    body.appendChild(name);
+    body.appendChild(stage);
+    return {
+      body: body,
+      update: function (s) {
+        setText(name, s.event.name);
+        setText(stage, s.event.stage);
+        name.classList.toggle("is-blank", s.event.name === "");
+        stage.classList.toggle("is-blank", s.event.stage === "");
+        body.classList.toggle("is-blank", s.event.name === "" && s.event.stage === "");
+      }
+    };
+  }
+
+  function buildTimer() {
+    var body = el("div", "el-body panel panel-timer");
+    var label = el("div", "timer-label clip");
+    var row = el("div", "timer-value-row");
+    var dot = el("span", "dot run-dot");
+    var value = el("span", "timer-value");
+    row.appendChild(dot);
+    row.appendChild(value);
+    body.appendChild(label);
+    body.appendChild(row);
+    return {
+      body: body,
+      update: function (s) {
+        setText(value, s.clock.value);
+        setText(label, s.clock.label);
+        label.classList.toggle("is-blank", s.clock.label === "");
+        body.classList.toggle("is-running", s.clock.running);
+        // No clock at all: hide the panel rather than park "--:--" on air.
+        body.classList.toggle("is-blank", s.clock.value === "");
+      }
+    };
+  }
+
+  function buildLowerThird() {
+    var body = el("div", "el-body panel panel-lower");
+    var colour = el("div", "lower-colour");
+    var code = el("span", "lower-code clip");
+    colour.appendChild(code);
+    var main = el("div", "lower-main");
+    var name = el("div", "lower-name clip");
+    var meta = el("div", "lower-meta");
+    var player = el("span", "lower-player clip");
+    var number = el("span", "lower-number");
+    meta.appendChild(player);
+    meta.appendChild(number);
+    main.appendChild(name);
+    main.appendChild(meta);
+    body.appendChild(colour);
+    body.appendChild(main);
+
+    var key = "";
+    return {
+      body: body,
+      update: function (s) {
+        var side = resolveSide(s.sides, s.lowerThird.side);
+        var show = s.lowerThird.visible && !!side;
+        if (!show) {
+          key = "";
+          body.classList.remove("is-in");
+          return;
+        }
+
+        var first = side.competitors[0] || { name: "", number: "" };
+        setText(code, side.short);
+        setText(name, side.name);
+        setText(player, first.name);
+        setText(number, first.number);
+        code.classList.toggle("is-blank", side.short === "");
+        meta.classList.toggle("is-blank", first.name === "" && first.number === "");
+        number.classList.toggle("is-blank", first.number === "");
+
+        setVar(body, "--team", side.color);
+        setVar(body, "--team-edge", rgba(side.color, 0.55) || "rgba(255,255,255,0.25)");
+        setVar(body, "--team-ink", inkOn(side.color));
+
+        // A different competitor re-runs the entrance, which reads as a card
+        // swap rather than text changing under the viewer.
+        var next = side.id + "\u0001" + first.name + "\u0001" + first.number;
+        if (next !== key) {
+          key = next;
+          restart(body, "is-in");
+        } else {
+          body.classList.add("is-in");
+        }
+      }
+    };
+  }
+
+  function buildTicker() {
+    var body = el("div", "el-body ticker");
+    var flag = el("div", "ticker-flag");
+    flag.appendChild(el("i", "dot live-dot"));
+    flag.appendChild(document.createTextNode("LIVE"));
+    var viewport = el("div", "ticker-viewport");
+    var track = el("div", "ticker-track");
+    viewport.appendChild(track);
+    body.appendChild(flag);
+    body.appendChild(viewport);
+
+    var items = [];
+    var copyWidth = 0;
+    var offset = 0;
+    var key = "";
+
+    function layoutTrack() {
+      var first = track.firstElementChild;
+      if (!first) {
+        copyWidth = 0;
+        return false;
+      }
+      var width = first.getBoundingClientRect().width;
+      if (!width) {
+        // display:none (the element is gated off): nothing to measure.
+        copyWidth = 0;
+        return false;
+      }
+      copyWidth = width;
+      var need = Math.max(2, Math.ceil(viewport.clientWidth / width) + 1);
+      while (track.children.length < need) track.appendChild(first.cloneNode(true));
+      while (track.children.length > need) track.removeChild(track.lastElementChild);
+      return true;
+    }
+
+    return {
+      body: body,
+      update: function (s) {
+        var next = s.ticker.join("\u0001");
+        if (!s.ticker.length) {
+          if (key !== "") {
+            key = "";
+            items = [];
+            copyWidth = 0;
+            offset = 0;
+            track.textContent = "";
+            track.style.transform = "";
+            body.classList.add("is-empty");
+          }
+          return;
+        }
+        body.classList.remove("is-empty");
+        if (next !== key) {
+          key = next;
+          items = s.ticker.slice();
+          offset = 0;
+          copyWidth = 0;
+          var proto = el("div", "ticker-copy");
+          items.forEach(function (text) {
+            var item = el("span", "ticker-item clip");
+            item.textContent = text;
+            proto.appendChild(item);
+          });
+          track.textContent = "";
+          track.appendChild(proto);
+          track.style.transform = "";
+          // Measured on the next frame, once the new markup has a box.
+          requestAnimationFrame(function () { layoutTrack(); });
+        }
+      },
+      tick: function (dt) {
+        if (!copyWidth) {
+          if (items.length) layoutTrack();
+          return;
+        }
+        // Scale the scroll speed with the canvas so it reads the same at 720p
+        // and 4K: a full crossing stays roughly the same number of seconds.
+        var speed = Math.max(28, (layout.canvas.width * unit) / 22);
+        offset = (offset + speed * dt) % copyWidth;
+        track.style.transform = "translate3d(" + (-offset).toFixed(2) + "px,0,0)";
+      },
+      hasContent: function () { return items.length > 0; },
+      remeasure: function () { if (items.length) layoutTrack(); }
+    };
+  }
+
+  function buildAnnouncement() {
+    var body = el("div", "el-body announce");
+    var main = el("div", "announce-main");
+    var ruleL = el("span", "announce-rule");
+    var title = el("h1", "announce-title clip");
+    var ruleR = el("span", "announce-rule announce-rule-r");
+    main.appendChild(ruleL);
+    main.appendChild(title);
+    main.appendChild(ruleR);
+    var sub = el("div", "announce-sub clip");
+    body.appendChild(main);
+    body.appendChild(sub);
+
+    var key = "";
+    return {
+      body: body,
+      update: function (s) {
+        var a = s.announcement;
+        var show = a.visible && (a.title !== "" || a.subtitle !== "");
+        if (!show) {
+          key = "";
+          body.classList.remove("is-in");
+          return;
+        }
+        setText(title, a.title);
+        setText(sub, a.subtitle);
+        title.classList.toggle("is-blank", a.title === "");
+        sub.classList.toggle("is-blank", a.subtitle === "");
+
+        var next = a.title + "\u0001" + a.subtitle;
+        if (next !== key) {
+          key = next;
+          restart(body, "is-in");
+        } else {
+          body.classList.add("is-in");
+        }
+      }
+    };
+  }
+
+  function buildFrame() {
+    var body = el("div", "el-body frame");
+    body.appendChild(el("span", "frame-bar"));
+    ["tl", "tr", "bl", "br"].forEach(function (corner) {
+      body.appendChild(el("span", "frame-corner frame-" + corner));
+    });
+    return {
+      body: body,
+      // The frame carries no match data: it frames the viewport.
+      update: function () {}
+    };
+  }
+
+  function buildText(element) {
+    var body = el("div", "el-body bound-text clip");
+    return {
+      body: body,
+      update: function (s, current) {
+        // A literal, or a path into the match state. Same tiny grammar as
+        // Bindings.java on the mod side.
+        var value = current.binding ? resolveBinding(s, current.binding) : current.text;
+        setText(body, uppercase(value, current));
+        body.classList.toggle("is-blank", !value);
+      }
+    };
+  }
+
+  function uppercase(value, element) {
+    var up = element && element.style && element.style.uppercase;
+    return up ? String(value || "").toUpperCase() : String(value || "");
+  }
+
+  /**
+   * Reads a value out of the state by path: `event.name`, `sides[0].score`.
+   * The same grammar the mod implements in Bindings.java, kept deliberately
+   * small so the two cannot drift.
+   */
+  function resolveBinding(root, path) {
+    if (!root || !path) return "";
+    var current = root;
+    var segments = String(path).trim().split(".");
+    for (var i = 0; i < segments.length; i++) {
+      if (current === null || current === undefined) return "";
+      var segment = segments[i];
+      var bracket = segment.indexOf("[");
+      var field = bracket < 0 ? segment : segment.slice(0, bracket);
+      if (field) {
+        if (typeof current !== "object" || Array.isArray(current)) return "";
+        current = current[field];
+      }
+      var cursor = bracket;
+      while (cursor >= 0 && cursor < segment.length) {
+        var close = segment.indexOf("]", cursor);
+        if (close < 0) return "";
+        var index = parseInt(segment.slice(cursor + 1, close), 10);
+        if (!Array.isArray(current) || !isFinite(index) ||
+            index < 0 || index >= current.length) {
+          return "";
+        }
+        current = current[index];
+        cursor = segment.indexOf("[", close);
+      }
+    }
+    if (current === null || current === undefined) return "";
+    var type = typeof current;
+    if (type === "string" || type === "number" || type === "boolean") return String(current);
+    // An object or array has no sensible one-line rendering, and printing JSON
+    // onto a broadcast graphic is never what the author meant.
+    return "";
+  }
+
+  var BUILDERS = {
+    matchBug: buildMatchBug,
+    eventInfo: buildEventInfo,
+    timer: buildTimer,
+    lowerThird: buildLowerThird,
+    ticker: buildTicker,
+    announcement: buildAnnouncement,
+    frame: buildFrame,
+    text: buildText
+  };
+
+  // ---- layout -------------------------------------------------------------
+
+  function anchorIsRight(anchor) { return anchor === "topRight" || anchor === "bottomRight"; }
+  function anchorIsBottom(anchor) { return anchor === "bottomLeft" || anchor === "bottomRight"; }
+  function anchorOrigin(anchor) {
+    switch (anchor) {
+      case "topRight": return "100% 0";
+      case "bottomLeft": return "0 100%";
+      case "bottomRight": return "100% 100%";
+      case "center": return "50% 50%";
+      default: return "0 0";
+    }
+  }
+
+  /* The width, in design pixels, each element type is designed at.
+
+     An element the document gives an explicit width to is scaled by
+     (its width / this), so resizing a box scales the type, the padding and the
+     dots inside it together instead of leaving fixed-size text in a bigger box.
+     An element left at width 0 is content-sized, so there is nothing to fit into
+     and the ratio is 1.
+
+     These must equal Panels.naturalWidth() in the mod, which is what the in-game
+     HUD divides by. Two renderers, one set of numbers. */
+  var REFERENCE_WIDTH = {
+    matchBug: 346,
+    eventInfo: 432,
+    timer: 260,
+    lowerThird: 768,
+    ticker: 1920,
+    announcement: 0,
+    frame: 0,
+    text: 0
+  };
+
+  function boxRatio(element) {
+    var reference = REFERENCE_WIDTH[element.type] || 0;
+    if (!reference || !(element.width > 0)) return 1;
+    return Math.max(0.2, Math.min(5, element.width / reference));
+  }
+
+  var EASINGS = {
+    linear: "linear",
+    outCubic: "cubic-bezier(0.16, 1, 0.3, 1)",
+    outQuint: "cubic-bezier(0.22, 1, 0.36, 1)",
+    outBack: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    inOutSine: "cubic-bezier(0.37, 0, 0.63, 1)"
+  };
+
+  var stage = document.getElementById("stage");
+
+  /** Applies the document's palette to the page. */
+  function applyTheme(theme) {
+    var fallback = {
+      accent: "#FFC24B", live: "#FF4D4D", ink: "#F2F4F8", inkDim: "#9AA4B2",
+      panelTop: "#1A2030E6", panelBottom: "#0C1018F0", border: "#FFFFFF40",
+      home: "#4C9AFF", away: "#FF6B6B", font: ""
+    };
+    var t = theme || {};
+    var root = document.documentElement;
+    root.style.setProperty("--accent", color(t.accent, fallback.accent));
+    root.style.setProperty("--live", color(t.live, fallback.live));
+    root.style.setProperty("--ink", color(t.ink, fallback.ink));
+    root.style.setProperty("--ink-dim", color(t.inkDim, fallback.inkDim));
+    root.style.setProperty("--home", color(t.home, fallback.home));
+    root.style.setProperty("--away", color(t.away, fallback.away));
+    root.style.setProperty("--panel-top", color(t.panelTop, fallback.panelTop));
+    root.style.setProperty("--panel-bottom", color(t.panelBottom, fallback.panelBottom));
+    root.style.setProperty("--panel-border", color(t.border, fallback.border));
+
+    // The decorative washes are derived from the accent rather than baked in,
+    // so a restyle does not leave amber glows on a blue package.
+    var accent = color(t.accent, fallback.accent);
+    root.style.setProperty("--accent-soft", rgba(accent, 0.22) || "rgba(255,194,75,0.22)");
+    root.style.setProperty("--accent-mid", rgba(accent, 0.8) || "rgba(255,194,75,0.8)");
+    root.style.setProperty("--accent-tint", rgba(accent, 0.16) || "rgba(255,194,75,0.16)");
+
+    if (t.font) {
+      root.style.setProperty("--font-ui", t.font + ", " + fallbackFont());
+    } else {
+      root.style.removeProperty("--font-ui");
+    }
+  }
+
+  function fallbackFont() {
+    return 'ui-sans-serif, system-ui, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif';
+  }
+
+  /** Reconciles the mounted elements against the document. */
+  function applyLayout(next) {
+    if (!next || typeof next !== "object") return;
+    if (!next.canvas || !isFinite(next.canvas.width) || !isFinite(next.canvas.height)) return;
+
+    var structureChanged = !layout || layout.__sig !== signature(next);
+    layout = next;
+    layout.__sig = signature(next);
+
+    setUnit();
+    applyTheme(next.theme);
+
+    if (structureChanged) {
+      rebuild();
+    } else {
+      mounted.forEach(function (entry) {
+        var element = next.elements.filter(function (e) { return e && e.id === entry.id; })[0];
+        entry.element = element;
+        // Assigning an identical className is not reliably free: some engines
+        // restart a running animation on it, which would replay every entrance
+        // each time the editor moved something.
+        var classes = "el-body " + baseClass(entry.type) + enterClass(element) + extraClass(entry.type);
+        if (entry.body.className !== classes) entry.body.className = classes;
+        entry.body.style.setProperty("--enter-ms", enterMs(element));
+        entry.body.style.setProperty("--enter-ease", enterEase(element));
+      });
+    }
+
+    // One call does the rest: show what this document and scene put on air,
+    // write the match data into it, then place it against the content that just
+    // landed.
+    updateState();
+  }
+
+  function signature(doc) {
+    return (doc.elements || []).map(function (e) {
+      return e ? (e.id + ":" + e.type) : "-";
+    }).join("|");
+  }
+
+  /** A stable per-type class string, so a stylesheet can target a type. */
+  function baseClass(type) {
+    switch (type) {
+      case "matchBug": return "panel panel-bug";
+      case "eventInfo": return "panel panel-event";
+      case "timer": return "panel panel-timer";
+      case "lowerThird": return "panel panel-lower";
+      case "ticker": return "ticker";
+      case "announcement": return "announce";
+      case "frame": return "frame";
+      case "text": return "bound-text clip";
+      default: return "";
+    }
+  }
+
+  function extraClass() { return ""; }
+
+  function enterClass(element) {
+    var enter = element && element.anim ? element.anim.enter : "fade";
+    return enter && enter !== "none" ? " enter-" + enter : "";
+  }
+
+  function enterMs(element) {
+    var ms = element && element.anim ? element.anim.durationMs : 420;
+    return (isFinite(ms) ? Math.max(0, Math.min(4000, ms)) : 420) + "ms";
+  }
+
+  function enterEase(element) {
+    var name = element && element.anim ? element.anim.easing : "outCubic";
+    return EASINGS[name] || EASINGS.outCubic;
+  }
+
+  function rebuild() {
+    mounted.forEach(function (entry) {
+      if (entry.node.parentNode) entry.node.parentNode.removeChild(entry.node);
+    });
+    mounted = [];
+
+    (layout.elements || []).forEach(function (element) {
+      if (!element || !element.type) return;
+      var builder = BUILDERS[element.type];
+      if (!builder) {
+        log("版面里有未知元素类型，已跳过：" + element.type);
+        return;
+      }
+      var built = builder(element);
+      built.body.className = "el-body " + baseClass(element.type) + enterClass(element) + extraClass(element.type);
+      built.body.style.setProperty("--enter-ms", enterMs(element));
+      built.body.style.setProperty("--enter-ease", enterEase(element));
+
+      var node = el("div", "el");
+      node.setAttribute("data-id", element.id);
+      node.setAttribute("data-type", element.type);
+      node.appendChild(built.body);
+
+      stage.appendChild(node);
+      mounted.push({
+        id: element.id,
+        type: element.type,
+        node: node,
+        body: built.body,
+        component: built,
+        element: element
+      });
+    });
+  }
+
+  /** One design pixel of the 1920x1080 canvas, in CSS pixels. */
+  function setUnit() {
+    var next = Math.min(
+      window.innerWidth / layout.canvas.width,
+      window.innerHeight / layout.canvas.height);
+    if (!isFinite(next) || next <= 0) next = 1;
+    if (Math.abs(next - unit) < 0.0005) return;
+    unit = next;
+    document.documentElement.style.setProperty("--u", unit + "px");
+  }
+
+  /** Shows or hides each element for the current scene. */
+  function applyVisibility(scene) {
+    mounted.forEach(function (entry) {
+      var element = entry.element;
+      entry.node.hidden = !(element && element.visible !== false && sceneAllows(element, scene));
+    });
+  }
+
+  /** Where an element goes, mirroring Anchor.place in the mod. */
+  function position() {
+    var canvasW = layout.canvas.width;
+    var canvasH = layout.canvas.height;
+
+    // The ticker reserves the bottom edge, so bottom-anchored elements sit above
+    // it rather than on top of it. Measured first, because the timer's position
+    // depends on it.
+    var reserve = tickerReserve(state ? state.scene : "full");
+    tickerOn = reserve > 0;
+    document.body.classList.toggle("ticker-on", tickerOn);
+
+    mounted.forEach(function (entry) {
+      if (entry.node.hidden) return;
+      var element = entry.element;
+
+      if (element.type === "frame") {
+        positionFrame(entry, element);
+        return;
+      }
+
+      // The natural size is what the element measures at design scale: the CSS
+      // already multiplied every length by --u, so dividing by it recovers the
+      // document's own units.
+      var naturalW = entry.body.offsetWidth / unit;
+      var naturalH = entry.body.offsetHeight / unit;
+
+      var boxW = element.width > 0 ? element.width : naturalW;
+      var boxH = element.height > 0 ? element.height : naturalH;
+      if (element.width > 0) entry.node.style.width = px(element.width);
+      else entry.node.style.removeProperty("width");
+      if (element.height > 0) entry.node.style.height = px(element.height);
+      else entry.node.style.removeProperty("height");
+
+      var scale = effectiveScale(element);
+      var anchor = element.anchor || "topLeft";
+      var marginX = element.x || 0;
+      var marginY = (element.y || 0) +
+        (anchorIsBottom(anchor) && element.type !== "ticker" ? reserve : 0);
+
+      var scaledW = boxW * scale;
+      var scaledH = boxH * scale;
+      var left;
+      var top;
+      if (anchor === "center") {
+        left = (canvasW - scaledW) / 2 + marginX;
+        top = (canvasH - scaledH) / 2 + marginY;
+      } else {
+        left = anchorIsRight(anchor) ? canvasW - marginX - scaledW : marginX;
+        top = anchorIsBottom(anchor) ? canvasH - marginY - scaledH : marginY;
+      }
+
+      var node = entry.node;
+      node.style.left = px(left);
+      node.style.top = px(top);
+      node.style.transform = "scale(" + scale + ")";
+      node.style.zIndex = String(mounted.indexOf(entry) + 1);
+      // The element scales about its own top-left, so it grows rightward and
+      // downward from the corner the placement put it at; the entrance animation
+      // is what scales about the element's pinned corner.
+      // The box ratio drives every length inside the element through --uk, so a
+      // resized box takes its text with it.
+      entry.body.style.setProperty("--origin", anchorOrigin(anchor));
+      node.style.setProperty("--k", String(boxRatio(element)));
+      entry.body.style.setProperty("--el-opacity", String(element.opacity === undefined ? 1 : element.opacity));
+    });
+
+    // Measured now rather than on the next frame, so a ticker that has just
+    // appeared does not paint one frame at the wrong width.
+    mounted.forEach(function (entry) {
+      if (entry.type === "ticker" && !entry.node.hidden && entry.component.remeasure) {
+        entry.component.remeasure();
+      }
+    });
+  }
+
+  function positionFrame(entry, element) {
+    var safe = layout.safe || { x: 0, y: 0 };
+    var node = entry.node;
+    node.style.left = "0px";
+    node.style.top = "0px";
+    node.style.width = px(layout.canvas.width);
+    node.style.height = px(layout.canvas.height);
+    node.style.transform = "none";
+    node.style.zIndex = "0";
+    // The frame is the document's own inset, plus whatever the element adds.
+    entry.body.style.setProperty("--frame-inset",
+      px((safe.x || 0) + (element.x || 0)));
+    entry.body.style.setProperty("--frame-bottom", tickerOn
+      ? "calc(var(--ticker-h) + " + px((safe.y || 0) + (element.y || 0)) + ")"
+      : px((safe.y || 0) + (element.y || 0)));
+  }
+
+  function effectiveScale(element) {
+    var fontScale = element.style && isFinite(element.style.fontScale) ? element.style.fontScale : 1;
+    var scale = (isFinite(element.scale) ? element.scale : 1) * fontScale;
+    return Math.max(0.05, Math.min(16, scale));
+  }
+
+  /** How tall the ticker is, in design pixels. 0 when it is not on air. */
+  function tickerReserve(scene) {
+    var element = firstOfType("ticker");
+    if (!element || element.visible === false || !sceneAllows(element, scene)) return 0;
+    if (!state || !state.ticker.length) return 0;
+    return element.height > 0 ? element.height : 53;
+  }
+
+  function firstOfType(type) {
+    var found = null;
+    (layout.elements || []).forEach(function (element) {
+      if (!found && element && element.type === type) found = element;
+    });
+    return found;
+  }
+
+  function sceneAllows(element, scene) {
+    var scenes = element.scenes;
+    if (!scenes || !scenes.length) return true;
+    // An unknown scene reads as the fullest one rather than as "nothing shows",
+    // so a typo cannot blank the whole package.
+    var wanted = ["full", "compact", "minimal"].indexOf(scene) >= 0 ? scene : "full";
+    return scenes.indexOf(wanted) >= 0;
+  }
+
+  function updateState() {
+    var s = stateOrDefault();
+
+    // Visibility first: a component that is off air must not be updated, and one
+    // that is about to appear must have its markup in place before it is
+    // measured.
+    applyVisibility(s.scene);
+
+    mounted.forEach(function (entry) {
+      if (entry.node.hidden) return;
+      try {
+        entry.component.update(s, entry.element);
+      } catch (e) {
+        log("元素 " + entry.id + " 渲染失败：" + e.message);
+      }
+    });
+
+    // Then the geometry, and always. An element whose width is "as large as the
+    // content needs" changes size when the content does — a clock going from
+    // 00:00 to 128:45, a team name getting longer — and a right- or
+    // bottom-anchored element measured before that change moves its far edge off
+    // the screen. Repositioning after every update is what keeps `width: 0` from
+    // being a trap.
+    position();
+  }
+
+  // ---- state normalisation ------------------------------------------------
+
+  function toStr(v) {
+    if (v === null || v === undefined) return "";
+    var t = typeof v;
+    if (t === "string") return v;
+    if (t === "number") return isFinite(v) ? String(v) : "";
+    if (t === "boolean") return String(v);
+    return "";
+  }
+
+  function toNum(v, fallback) {
+    var n = typeof v === "number" ? v : parseFloat(v);
+    return isFinite(n) ? n : fallback;
+  }
+
+  function toArr(v) { return Array.isArray(v) ? v : []; }
+
+  function toBool(v) { return v === true || v === "true" || v === 1; }
+
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+  var DEFAULT_COLORS = ["#4C9AFF", "#FF6B6B"];
+
+  function normalizeSide(raw, index) {
+    var o = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : {};
+    return {
+      id: toStr(o.id) || ("side" + index),
+      name: toStr(o.name),
+      short: toStr(o.short),
+      color: color(o.color, DEFAULT_COLORS[index] || "#7E8AA0"),
+      score: toNum(o.score, 0),
+      competitors: toArr(o.competitors).map(function (c) {
+        var co = (c && typeof c === "object") ? c : {};
+        return { name: toStr(co.name), number: toStr(co.number) };
+      })
+    };
+  }
+
+  /* Top-level keys holding small objects. A partial event like
+     {"announcement":{"visible":false}} is merged a level deeper so it cannot
+     blank the title it did not mention. Arrays and everything else are replaced
+     wholesale — a list that arrives is the whole list. */
+  function mergeState(prev, incoming) {
+    var out = Object.create(null);
+    var k, i, merged;
+    if (prev) {
+      for (k in prev) if (has(prev, k)) out[k] = prev[k];
+    }
+    for (k in incoming) if (has(incoming, k)) out[k] = incoming[k];
+    for (k in incoming) {
+      if (!has(incoming, k)) continue;
+      var a = prev && prev[k];
+      var b = incoming[k];
+      if (a && b && typeof a === "object" && typeof b === "object" &&
+          !Array.isArray(a) && !Array.isArray(b)) {
+        merged = Object.create(null);
+        for (i in a) if (has(a, i)) merged[i] = a[i];
+        for (i in b) if (has(b, i)) merged[i] = b[i];
+        out[k] = merged;
+      }
+    }
+    return out;
+  }
+
+  function normalize(raw) {
+    var o = (raw && typeof raw === "object" && !Array.isArray(raw)) ? raw : null;
+    if (!o) return null;
+    var ev = (o.event && typeof o.event === "object") ? o.event : {};
+    var clock = (o.clock && typeof o.clock === "object") ? o.clock : {};
+    var ann = (o.announcement && typeof o.announcement === "object") ? o.announcement : {};
+    var low = (o.lowerThird && typeof o.lowerThird === "object") ? o.lowerThird : {};
+    var link = (o.link && typeof o.link === "object") ? o.link : {};
+    var scene = toStr(o.scene).toLowerCase();
+    if (["full", "compact", "minimal"].indexOf(scene) < 0) scene = "full";
+
+    return {
+      rev: toNum(o.rev, -1),
+      scene: scene,
+      preview: toBool(o.preview),
+      event: { name: toStr(ev.name), stage: toStr(ev.stage) },
+      sides: toArr(o.sides).map(normalizeSide),
+      clock: {
+        label: toStr(clock.label),
+        value: toStr(clock.value),
+        running: toBool(clock.running)
+      },
+      ticker: toArr(o.ticker).map(toStr).filter(function (s) { return s !== ""; }),
+      announcement: {
+        title: toStr(ann.title),
+        subtitle: toStr(ann.subtitle),
+        visible: toBool(ann.visible)
+      },
+      lowerThird: { visible: toBool(low.visible), side: toStr(low.side) },
+      link: {
+        // Defaults to connected: a payload that omits `link` must not raise a
+        // false alarm on air.
+        connected: link.connected === undefined ? true : toBool(link.connected),
+        millisSinceLastMessage: toNum(link.millisSinceLastMessage, -1)
+      },
+      // Kept whole so a bound text element can read any path, including fields
+      // this renderer has no opinion about.
+      __raw: o
+    };
+  }
+
+  function looksLikeState(o) {
+    if (!o || typeof o !== "object" || Array.isArray(o)) return false;
+    return has(o, "rev") || has(o, "scene") || has(o, "sides") || has(o, "ticker") ||
+      has(o, "event") || has(o, "clock") || has(o, "announcement") ||
+      has(o, "lowerThird") || has(o, "link");
+  }
+
+  var lastRaw = null;
+
+  function applyState(raw) {
+    if (!looksLikeState(raw)) return false;
+    lastRaw = mergeState(lastRaw, raw);
+    var next = normalize(lastRaw);
+    if (!next) return false;
+    var previous = state;
+    state = next;
+    clearTimeout(stateTimer);
+    updateState();
+    flashRevision(previous, next);
+    updateStatusChip();
+    return true;
+  }
+
+  function flashRevision(previous, next) {
+    if (!previous || previous.rev === next.rev) return;
+    restart(document.body, "rev-flash");
+    clearTimeout(revTimer);
+    revTimer = setTimeout(function () {
+      document.body.classList.remove("rev-flash");
+    }, 700);
+  }
+
+  function resolveSide(sides, id) {
+    var i;
+    if (id !== "") {
+      for (i = 0; i < sides.length; i++) {
+        if (sides[i].id === id) return sides[i];
+      }
+    }
+    return sides.length ? sides[0] : null;
+  }
+
+  // ---- connection ---------------------------------------------------------
+
+  var elStatus = document.getElementById("statusChip");
+  var elStatusText = document.getElementById("statusText");
+
+  var revTimer = 0;
+  var stateTimer = 0;
+  var retryTimer = 0;
+  var sse = null;
+  var sseOpen = false;
+  var attempt = 0;
+  var bootAt = Date.now();
+  var originOk = window.location.protocol !== "file:";
+  var RETRY_BASE_MS = 400;
+  var RETRY_MAX_MS = 15000;
+  var STATE_WAIT_MS = 4000;
+
+  function updateStatusChip() {
+    var text = "";
+    var warn = false;
+    var kind = "";
+    // Loading is not a fault. The chip stays away until something has actually
+    // failed or the grace period for a first state has passed, so switching an
+    // OBS scene never flashes a red warning on the way up.
+    var settling = attempt === 0 && !state && (Date.now() - bootAt) < STATE_WAIT_MS;
+
+    if (!originOk) {
+      text = "请用 http://127.0.0.1:8787/overlay/ 打开本页";
+      warn = true;
+    } else if (settling) {
+      warn = false;
+    } else if (!sseOpen) {
+      text = "包装页已断线 · OVERLAY LINK LOST · 正在重连 #" + attempt;
+      warn = true;
+    } else if (state && state.preview) {
+      // Local preview numbers must never be mistaken for a live feed.
+      text = "本地预览数据 · PREVIEW DATA · 未连接比赛";
+      warn = true;
+      kind = "preview";
+    } else if (state && !state.link.connected) {
+      text = "赛事数据未连接 · NO MATCH DATA · rev " + revText();
+      warn = true;
+    } else if (!state) {
+      text = "等待数据 · AWAITING DATA";
+      warn = true;
+    }
+
+    elStatus.classList.toggle("is-on", warn);
+    if (warn) setText(elStatusText, text);
+    elStatus.classList.toggle("is-preview", kind === "preview");
+  }
+
+  function revText() { return state && state.rev >= 0 ? String(state.rev) : "—"; }
+
+  function handlePayload(text) {
+    if (typeof text !== "string") return;
+    var trimmed = text.trim();
+    if (!trimmed || trimmed.charAt(0) === ":") return;   // comment / keepalive
+    var parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e) {
+      // Malformed or partial JSON: keep the last good state and carry on.
+      log("丢弃无法解析的消息，保留上一份状态");
+      return;
+    }
+    if (!applyState(parsed)) log("消息不是状态对象，已忽略");
+  }
+
+  function handleLayoutPayload(text) {
+    if (typeof text !== "string") return;
+    var trimmed = text.trim();
+    if (!trimmed) return;
+    var parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (e) {
+      log("版面文档无法解析，保留当前版面");
+      return;
+    }
+    applyLayout(parsed);
+  }
+
+  function fetchState() {
+    if (!originOk || typeof window.fetch !== "function") return;
+    window.fetch("/api/state", { cache: "no-store" }).then(function (res) {
+      return res && res.ok ? res.text() : "";
+    }).then(function (text) {
+      if (text) handlePayload(text);
+    })["catch"](function () {
+      // The SSE reconnect path owns the visible state; a failed snapshot here is
+      // not worth a second alarm.
+    });
+  }
+
+  function fetchLayout() {
+    if (!originOk || typeof window.fetch !== "function") return;
+    window.fetch("/api/layout", { cache: "no-store" }).then(function (res) {
+      return res && res.ok ? res.text() : "";
+    }).then(function (text) {
+      if (text) handleLayoutPayload(text);
+    })["catch"](function () {});
+  }
+
+  function scheduleRetry() {
+    // attempt is already 1 on the first drop, so the exponent starts at 0:
+    // 400ms, 680ms, 1.2s, 2s, 3.3s, ... capped at 15s.
+    var delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.pow(1.7, Math.min(attempt - 1, 8)));
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(openStream, delay);
+  }
+
+  function dropStream(reason) {
+    if (sse) {
+      try { sse.close(); } catch (e) { /* already gone */ }
+      sse = null;
+    }
+    sseOpen = false;
+    attempt++;
+    updateStatusChip();
+    log(reason + "，重连 #" + attempt);
+    scheduleRetry();
+  }
+
+  function openStream() {
+    if (!originOk) return;
+    if (sse) {
+      try { sse.close(); } catch (e) { /* already gone */ }
+      sse = null;
+    }
+
+    var src;
+    try {
+      src = new EventSource("/events");
+    } catch (e) {
+      dropStream("无法建立 SSE 连接");
+      return;
+    }
+    sse = src;
+
+    src.onopen = function () {
+      if (sse !== src) return;
+      sseOpen = true;
+      attempt = 0;
+      updateStatusChip();
+      // A reconnect may have missed events, so take a snapshot of both too.
+      fetchState();
+      fetchLayout();
+    };
+
+    src.onmessage = function (ev) {
+      if (sse !== src) return;
+      sseOpen = true;
+      handlePayload(ev && ev.data);
+      updateStatusChip();
+    };
+
+    // The layout travels as a named event so a restyle can be told apart from a
+    // score change without diffing the payload.
+    src.addEventListener("layout", function (ev) {
+      if (sse !== src) return;
+      handleLayoutPayload(ev && ev.data);
+    });
+
+    src.onerror = function () {
+      // EventSource retries by itself; we take the stream over so the backoff
+      // and the visible state are ours and cannot silently go stale.
+      if (sse !== src) return;
+      dropStream("SSE 断开");
+    };
+  }
+
+  // ---- the editor's live edits --------------------------------------------
+
+  /* While an element is being dragged the editor posts the document here, so the
+     preview updates without a save. Only accepted when this page is embedded:
+     a top-level overlay has no editor to hear from, and accepting the message
+     from anywhere would let any page on the machine restyle a live broadcast. */
+  window.addEventListener("message", function (event) {
+    if (window.parent === window) return;
+    var data = event && event.data;
+    if (!data || data.type !== "stevehud:layout") return;
+    if (data.layout) applyLayout(data.layout);
+  });
+
+  // ---- animation loop -----------------------------------------------------
+
+  var rafId = 0;
+  var lastSecond = -1;
+  var lastFrameTs = 0;
+
+  function pad2(n) { return n < 10 ? "0" + n : String(n); }
+
+  function frame(ts) {
+    rafId = requestAnimationFrame(frame);
+    var now = Date.now();
+    var second = Math.floor(now / 1000);
+    var tickSeconds = second !== lastSecond;
+    lastSecond = second;
+    // dt comes from the rAF timestamp and is clamped, so a tab that was
+    // throttled or paused resumes without the marquee jumping.
+    var dt = lastFrameTs ? Math.min(0.1, (ts - lastFrameTs) / 1000) : 0;
+    lastFrameTs = ts;
+
+    mounted.forEach(function (entry) {
+      if (entry.node.hidden) {
+        if (entry.type === "ticker") return;
+      }
+      if (!entry.component.tick) return;
+      try {
+        if (entry.type === "matchBug") {
+          if (tickSeconds) entry.component.tick(now);
+        } else {
+          entry.component.tick(dt);
+        }
+      } catch (e) {
+        log("元素 " + entry.id + " 动画失败：" + e.message);
+      }
+    });
+  }
+
+  function startLoop() {
+    if (rafId) return;
+    lastFrameTs = 0;
+    rafId = requestAnimationFrame(frame);
+  }
+
+  function stopLoop() {
+    if (!rafId) return;
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+
+  function onVisibility() {
+    if (document.hidden) stopLoop();
+    else startLoop();
+  }
+
+  var resizePending = false;
+  function onResize() {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(function () {
+      resizePending = false;
+      if (!layout) return;
+      setUnit();
+      position();
+    });
+  }
+
+  // ---- boot ---------------------------------------------------------------
+
+  function boot() {
+    updateStatusChip();
+    startLoop();
+    window.addEventListener("resize", onResize);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    if (!originOk) {
+      // Opened straight off disk: absolute endpoints cannot resolve and SSE
+      // cannot work at all. Say so instead of sitting there looking broken.
+      log("请通过 http://127.0.0.1:8787/overlay/ 打开本页");
+      return;
+    }
+
+    fetchLayout();
+    fetchState();
+    openStream();
+
+    // If neither the snapshot nor the stream produces a state, the chip says so
+    // rather than leaving silent placeholder panels on air.
+    clearTimeout(stateTimer);
+    stateTimer = setTimeout(updateStatusChip, STATE_WAIT_MS);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+
+</body>
+</html>
